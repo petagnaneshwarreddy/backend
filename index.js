@@ -14,7 +14,7 @@ app.use(cors()); // Allows cross-origin requests from your frontend
 app.use(express.json()); // Parses incoming JSON data from the request body
 
 // Define a port for the server to run on
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
