@@ -6,14 +6,12 @@ require("dotenv").config();
 const app = express();
 app.use(express.json());
 
-// ✅ Allow requests from your frontend (Vercel)
 app.use(cors({
-  origin: ["https://your-frontend.vercel.app"], // replace with your actual Vercel URL
+  origin: ["https://your-frontend.vercel.app"],
   methods: ["GET", "POST"],
   credentials: true
 }));
 
-// ✅ MongoDB connection
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -21,7 +19,6 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log("✅ MongoDB connected"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
-// ✅ Define Schema & Model
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -36,7 +33,6 @@ const EnrollmentSchema = new mongoose.Schema({
 
 const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
 
-// ✅ API route to save enrollment
 app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = new Enrollment(req.body);
@@ -48,14 +44,14 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// ✅ New API route to verify certificate by ID
 app.get("/api/verify/:certificateId", async (req, res) => {
   try {
     const { certificateId } = req.params;
     const enrollment = await Enrollment.findOne({ certificateId: certificateId });
 
     if (!enrollment) {
-      return res.status(404).json({ msg: "Certificate not found. Please check the ID." });
+      // ✅ Change here: Return a 200 OK status with a custom message
+      return res.status(200).json({ msg: "ID not present" });
     }
 
     res.status(200).json(enrollment);
