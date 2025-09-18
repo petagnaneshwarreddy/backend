@@ -105,6 +105,55 @@ app.get("/", (req, res) => {
   res.json({ message: "Backend is running 🚀" });
 });
 
+// ✅ API route for Contact form
+app.post("/api/contact", async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+
+    if (!name || !email || !message) {
+      return res.status(400).json({ msg: "All fields are required" });
+    }
+
+    // Email to admin
+    const adminMailOptions = {
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER, // your inbox
+      subject: `New Contact Form Message from ${name}`,
+      html: `
+        <h2>New Contact Form Submission</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Message:</strong> ${message}</p>
+      `,
+    };
+
+    // Confirmation email to user
+    const userMailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Thank you for contacting Skillfull Technologies",
+      html: `
+        <h3>Hello ${name},</h3>
+        <p>We received your message:</p>
+        <blockquote>${message}</blockquote>
+        <p>Our team will get back to you shortly.</p>
+        <br>
+        <p>Best regards,</p>
+        <p><strong>Skillfull Technologies Team</strong></p>
+      `,
+    };
+
+    // Send both emails
+    await transporter.sendMail(adminMailOptions);
+    await transporter.sendMail(userMailOptions);
+
+    res.status(200).json({ msg: "Message sent successfully!" });
+  } catch (err) {
+    console.error("❌ Contact form error:", err);
+    res.status(500).json({ msg: "Failed to send message" });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
