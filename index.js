@@ -1,7 +1,10 @@
+// index.js
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const app = express();
@@ -9,7 +12,7 @@ app.use(express.json());
 
 // ✅ CORS setup for frontend
 app.use(cors({
-  origin: ["https://skillfull-technologies.vercel.app"], // replace with your actual Vercel URL
+  origin: ["https://skillfull-technologies.vercel.app"],
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -22,8 +25,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS,
   },
 });
-
-// Verify transporter
 transporter.verify((err, success) => {
   if (err) console.error("❌ Nodemailer error:", err);
   else console.log("✅ Nodemailer transporter ready");
@@ -37,7 +38,18 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log("✅ MongoDB connected ✅"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
-// ✅ Enrollment Schema & Model
+/* -------------------- MODELS -------------------- */
+
+// 1. Credentials = login credentials
+const CredentialSchema = new mongoose.Schema({
+  username: { type: String, required: true },
+  email:    { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  createdAt:{ type: Date, default: Date.now }
+});
+const Credential = mongoose.model("Credential", CredentialSchema);
+
+// 2. Enrollment = course enrollments (no passwords here)
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -47,38 +59,34 @@ const EnrollmentSchema = new mongoose.Schema({
   collegeName: String,
   state: String,
   duration: String,
-  password: String, // optional if using login
   createdAt: { type: Date, default: Date.now }
 });
-
 const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
 
-// ✅ OTP Schema & Model
+// 3. OTP = temporary OTPs
 const OtpSchema = new mongoose.Schema({
   email: { type: String, required: true },
   otp: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 300 } // OTP expires after 5 min
+  createdAt: { type: Date, default: Date.now, expires: 300 } // expires in 5 min
 });
-
 const Otp = mongoose.model("Otp", OtpSchema);
 
-// ✅ Route to send OTP
+/* -------------------- ROUTES -------------------- */
+
+// ✅ Send OTP
 app.post("/send-otp", async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ message: "Email is required" });
 
-    // Generate 6-digit OTP
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Save OTP in DB (upsert)
     await Otp.findOneAndUpdate(
       { email },
       { otp: otpCode, createdAt: new Date() },
       { upsert: true, new: true }
     );
 
-    // Send OTP email
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -95,26 +103,25 @@ app.post("/send-otp", async (req, res) => {
   }
 });
 
-// ✅ Registration route with OTP verification
+// ✅ Register (credentials only)
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password, otp } = req.body;
 
-    // Check OTP
     const otpRecord = await Otp.findOne({ email, otp });
     if (!otpRecord) {
       return res.status(400).json({ message: "Invalid or expired OTP" });
     }
 
-    // OTP is valid → create enrollment/user
-    const enrollment = new Enrollment({
-      fullName: username,
-      email,
-      password
-    });
-    await enrollment.save();
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Delete OTP after use
+    const cred = new Credential({
+      username,
+      email,
+      password: hashedPassword
+    });
+    await cred.save();
+
     await Otp.deleteOne({ _id: otpRecord._id });
 
     res.status(201).json({ message: "Registered successfully!" });
@@ -125,7 +132,38 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// ✅ API route to save enrollment
+// ✅ Login (credentials only)
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const user = await Credential.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email, username: user.username },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: "1h" }
+    );
+
+    res.status(200).json({ message: "Login successful", token });
+  } catch (err) {
+    console.error("❌ Login error:", err);
+    res.status(500).json({ message: "Server error during login" });
+  }
+});
+
+// ✅ Save course enrollment (separate collection)
 app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = new Enrollment(req.body);
@@ -139,7 +177,7 @@ app.post("/api/enroll", async (req, res) => {
         <h1>Hello ${enrollment.fullName},</h1>
         <p>Thank you for enrolling in our course <strong>${enrollment.courseTitle}</strong>.</p>
         <p>Your enrollment has been successfully submitted. We will contact you shortly.</p>
-        <p>Join our WhatsApp community to stay updated:</p>
+        <p>Join our WhatsApp community:</p>
         <p><strong><a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join WhatsApp Group</a></strong></p>
         <br>
         <p>Best regards,</p>
