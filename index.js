@@ -1,26 +1,32 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const nodemailer = require("nodemailer"); // New: Import nodemailer
-require("dotenv").config(); // New: Load environment variables
+const nodemailer = require("nodemailer");
+require("dotenv").config();
 
 const app = express();
 app.use(express.json());
 
-// ✅ Allow requests from your frontend (Vercel)
+// ✅ CORS setup for frontend
 app.use(cors({
   origin: ["https://skillfull-technologies.vercel.app"], // replace with your actual Vercel URL
   methods: ["GET", "POST"],
   credentials: true
 }));
 
-// New: Create a Nodemailer transporter
+// ✅ Nodemailer transporter
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+});
+
+// Verify transporter
+transporter.verify((err, success) => {
+  if (err) console.error("❌ Nodemailer error:", err);
+  else console.log("✅ Nodemailer transporter ready");
 });
 
 // ✅ MongoDB connection
@@ -31,7 +37,7 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log("✅ MongoDB connected ✅"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
-// ✅ Define Schema & Model
+// ✅ Enrollment Schema & Model
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -41,10 +47,83 @@ const EnrollmentSchema = new mongoose.Schema({
   collegeName: String,
   state: String,
   duration: String,
+  password: String, // optional if using login
   createdAt: { type: Date, default: Date.now }
 });
 
 const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
+
+// ✅ OTP Schema & Model
+const OtpSchema = new mongoose.Schema({
+  email: { type: String, required: true },
+  otp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, expires: 300 } // OTP expires after 5 min
+});
+
+const Otp = mongoose.model("Otp", OtpSchema);
+
+// ✅ Route to send OTP
+app.post("/send-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    // Generate 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save OTP in DB (upsert)
+    await Otp.findOneAndUpdate(
+      { email },
+      { otp: otpCode, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    // Send OTP email
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Your OTP Code",
+      html: `<p>Your OTP code is <strong>${otpCode}</strong>. It will expire in 5 minutes.</p>`
+    };
+
+    await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: "OTP sent successfully!" });
+
+  } catch (err) {
+    console.error("❌ OTP error:", err);
+    res.status(500).json({ message: "Failed to send OTP" });
+  }
+});
+
+// ✅ Registration route with OTP verification
+app.post("/register", async (req, res) => {
+  try {
+    const { username, email, password, otp } = req.body;
+
+    // Check OTP
+    const otpRecord = await Otp.findOne({ email, otp });
+    if (!otpRecord) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
+
+    // OTP is valid → create enrollment/user
+    const enrollment = new Enrollment({
+      fullName: username,
+      email,
+      password
+    });
+    await enrollment.save();
+
+    // Delete OTP after use
+    await Otp.deleteOne({ _id: otpRecord._id });
+
+    res.status(201).json({ message: "Registered successfully!" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Registration failed" });
+  }
+});
 
 // ✅ API route to save enrollment
 app.post("/api/enroll", async (req, res) => {
@@ -52,31 +131,29 @@ app.post("/api/enroll", async (req, res) => {
     const enrollment = new Enrollment(req.body);
     await enrollment.save();
 
-    // New: Define email content with WhatsApp link
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: enrollment.email,
       subject: `Enrollment Confirmation for ${enrollment.courseTitle}`,
       html: `
         <h1>Hello ${enrollment.fullName},</h1>
-        <p>Thank you for enrolling in our course **${enrollment.courseTitle}**.</p>
-        <p>Your enrollment has been successfully submitted. We will contact you shortly with further details.</p>
-        <p>In the meantime, you can join our WhatsApp community to stay updated and connect with other students:</p>
-        <p><strong><a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join our WhatsApp Group</a></strong></p>
+        <p>Thank you for enrolling in our course <strong>${enrollment.courseTitle}</strong>.</p>
+        <p>Your enrollment has been successfully submitted. We will contact you shortly.</p>
+        <p>Join our WhatsApp community to stay updated:</p>
+        <p><strong><a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join WhatsApp Group</a></strong></p>
         <br>
         <p>Best regards,</p>
-        <p>The Skillfull Technologies Team</p>
-      `,
+        <p>Skillfull Technologies Team</p>
+      `
     };
 
-    // New: Send the email
     try {
       await transporter.sendMail(mailOptions);
       console.log(`Email sent successfully to ${enrollment.email}`);
     } catch (emailError) {
       console.error("❌ Error sending email:", emailError);
     }
-    
+
     res.status(201).json({ msg: "Enrollment saved successfully!" });
   } catch (err) {
     console.error(err);
@@ -84,11 +161,11 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// ✅ New API route to verify certificate by ID
+// ✅ Verify certificate by ID
 app.get("/api/verify/:certificateId", async (req, res) => {
   try {
     const { certificateId } = req.params;
-    const enrollment = await Enrollment.findOne({ certificateId: certificateId });
+    const enrollment = await Enrollment.findOne({ certificateId });
 
     if (!enrollment) {
       return res.status(200).json({ msg: "ID not present" });
@@ -101,23 +178,17 @@ app.get("/api/verify/:certificateId", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🚀" });
-});
-
-// ✅ API route for Contact form
+// ✅ Contact form route
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
-
     if (!name || !email || !message) {
       return res.status(400).json({ msg: "All fields are required" });
     }
 
-    // Email to admin
     const adminMailOptions = {
       from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER, // your inbox
+      to: process.env.EMAIL_USER,
       subject: `New Contact Form Message from ${name}`,
       html: `
         <h2>New Contact Form Submission</h2>
@@ -127,7 +198,6 @@ app.post("/api/contact", async (req, res) => {
       `,
     };
 
-    // Confirmation email to user
     const userMailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -143,7 +213,6 @@ app.post("/api/contact", async (req, res) => {
       `,
     };
 
-    // Send both emails
     await transporter.sendMail(adminMailOptions);
     await transporter.sendMail(userMailOptions);
 
@@ -152,6 +221,11 @@ app.post("/api/contact", async (req, res) => {
     console.error("❌ Contact form error:", err);
     res.status(500).json({ msg: "Failed to send message" });
   }
+});
+
+// ✅ Root route
+app.get("/", (req, res) => {
+  res.json({ message: "Backend is running 🚀" });
 });
 
 const PORT = process.env.PORT || 3000;
