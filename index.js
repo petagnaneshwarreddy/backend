@@ -1,139 +1,212 @@
-// -------------------- IMPORTS & CONFIG --------------------
-const express = require("express");           
-const mongoose = require("mongoose");         
-const cors = require("cors");                 
-const nodemailer = require("nodemailer");     
-const bcrypt = require("bcrypt");             
-const jwt = require("jsonwebtoken");          
-require("dotenv").config();                   
+// index.js
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const nodemailer = require("nodemailer");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+require("dotenv").config();
 
 const app = express();
+app.use(express.json());
 
-// -------------------- MIDDLEWARE --------------------
-app.use(express.json());  
-
-// CORS setup
+// -------------------- CORS --------------------
 app.use(cors({
-    origin: ["https://skillfull-technologies.vercel.app"],
-    methods: ["GET", "POST"],
-    credentials: true
+  origin: ["https://skillfull-technologies.vercel.app"],
+  methods: ["GET", "POST", "PUT"],
+  credentials: true
 }));
 
-// -------------------- EMAIL SETUP --------------------
+// -------------------- Serve profile images --------------------
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// -------------------- Multer Setup --------------------
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "./uploads"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
+});
+const upload = multer({ storage });
+
+// -------------------- Nodemailer --------------------
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,   
-        pass: process.env.EMAIL_PASS,   
-    },
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+transporter.verify(err => {
+  if (err) console.error("❌ Nodemailer error:", err);
+  else console.log("✅ Nodemailer ready");
 });
 
-transporter.verify((err, success) => {
-    if (err) console.error("❌ Nodemailer error:", err);
-    else console.log("✅ Nodemailer transporter ready");
-});
-
-// -------------------- DATABASE CONNECTION --------------------
-mongoose.connect(process.env.MONGO_URI, { 
-    useNewUrlParser: true, 
-    useUnifiedTopology: true 
+// -------------------- MongoDB --------------------
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
 })
-.then(() => console.log("✅ MongoDB connected ✅"))
+.then(() => console.log("✅ MongoDB connected"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
 // -------------------- MODELS --------------------
 const CredentialSchema = new mongoose.Schema({
-    username: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now }
+  username: { type: String, required: true },
+  email:    { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  profilePic: { type: String, default: "" }, // profile image
+  createdAt: { type: Date, default: Date.now }
 });
 const Credential = mongoose.model("Credential", CredentialSchema);
 
-const EnrollmentSchema = new mongoose.Schema({
-    courseTitle: String,
-    certificateId: String,
-    fullName: String,
-    email: String,
-    phone: String,
-    collegeName: String,
-    state: String,
-    duration: String,
-    createdAt: { type: Date, default: Date.now }
-});
-const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
-
 const OtpSchema = new mongoose.Schema({
-    email: { type: String, required: true },
-    otp: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now, expires: 300 }
+  email: { type: String, required: true },
+  otp:   { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, expires: 300 }
 });
 const Otp = mongoose.model("Otp", OtpSchema);
 
+const EnrollmentSchema = new mongoose.Schema({
+  courseTitle: String,
+  certificateId: String,
+  fullName: String,
+  email: String,
+  phone: String,
+  collegeName: String,
+  state: String,
+  duration: String,
+  createdAt: { type: Date, default: Date.now }
+});
+const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
+
 // -------------------- ROUTES --------------------
 
-// -------------------- ENROLLMENT ROUTE --------------------
+// Send OTP
+app.post("/send-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email required" });
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    await Otp.findOneAndUpdate(
+      { email },
+      { otp: otpCode, createdAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "Your OTP Code",
+      html: `<p>Your OTP is <strong>${otpCode}</strong>. Expires in 5 min.</p>`
+    };
+    await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: "OTP sent successfully!" });
+
+  } catch (err) {
+    console.error("❌ OTP error:", err);
+    res.status(500).json({ message: "Failed to send OTP" });
+  }
+});
+
+// Register
+app.post("/register", async (req, res) => {
+  try {
+    const { username, email, password, otp } = req.body;
+    const otpRecord = await Otp.findOne({ email, otp });
+    if (!otpRecord) return res.status(400).json({ message: "Invalid/expired OTP" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new Credential({ username, email, password: hashedPassword });
+    await user.save();
+    await Otp.deleteOne({ _id: otpRecord._id });
+    res.status(201).json({ message: "Registered successfully!" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Registration failed" });
+  }
+});
+
+// Login (email or username)
+app.post("/login", async (req, res) => {
+  try {
+    const { identifier, password } = req.body;
+    if (!identifier || !password) return res.status(400).json({ message: "Username/email and password required" });
+
+    const user = await Credential.findOne({ $or: [{ email: identifier }, { username: identifier }] });
+    if (!user) return res.status(400).json({ message: "User not found" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email, username: user.username, profilePic: user.profilePic || "" },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: "1h" }
+    );
+
+    res.status(200).json({ message: "Login successful", token });
+  } catch (err) {
+    console.error("❌ Login error:", err);
+    res.status(500).json({ message: "Server error during login" });
+  }
+});
+
+// Reset password
+app.post("/reset-password", async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword) return res.status(400).json({ message: "Email, OTP, and new password required" });
+
+    const otpRecord = await Otp.findOne({ email, otp });
+    if (!otpRecord) return res.status(400).json({ message: "Invalid or expired OTP" });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const updated = await Credential.findOneAndUpdate({ email }, { password: hashedPassword }, { new: true });
+    if (!updated) return res.status(404).json({ message: "User not found" });
+
+    await Otp.deleteOne({ _id: otpRecord._id });
+    res.status(200).json({ message: "Password reset successful!" });
+  } catch (err) {
+    console.error("❌ Reset password error:", err);
+    res.status(500).json({ message: "Server error while resetting password" });
+  }
+});
+
+// -------------------- Profile: Upload/Update profile picture --------------------
+app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const filePath = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    const updatedUser = await Credential.findByIdAndUpdate(
+      userId,
+      { profilePic: filePath },
+      { new: true }
+    );
+
+    if (!updatedUser) return res.status(404).json({ message: "User not found" });
+    res.status(200).json({ message: "Profile updated successfully!", profilePic: filePath });
+  } catch (err) {
+    console.error("❌ Profile update error:", err);
+    res.status(500).json({ message: "Failed to update profile" });
+  }
+});
+
+// Enrollment (optional)
 app.post("/api/enroll", async (req, res) => {
-    try {
-        const { courseTitle, fullName, email, phone, collegeName, state, duration, certificateId } = req.body;
-
-        // Save enrollment in DB
-        const enrollment = new Enrollment({
-            courseTitle,
-            fullName,
-            email,
-            phone,
-            collegeName,
-            state,
-            duration,
-            certificateId
-        });
-        await enrollment.save();
-
-        // Prepare email with verification link
-        const verifyLink = `https://skillfull-technologies.vercel.app/verify/${certificateId}`;
-
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: `Enrollment Confirmation: ${courseTitle}`,
-            html: `
-                <h1>Hello ${fullName},</h1>
-                <p>Thank you for enrolling in <strong>${courseTitle}</strong>.</p>
-                <p>Your enrollment has been successfully submitted. Below is your certificate ID:</p>
-                <p><strong>${certificateId}</strong></p>
-                <p>You can verify your certificate <a href="${verifyLink}">here</a>.</p>
-                <p>Join our WhatsApp community:</p>
-                <p><a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join WhatsApp Group</a></p>
-                <br><p>Best regards,</p>
-                <p>Skillfull Technologies Team</p>
-            `
-        };
-
-        // Send email
-        try {
-            await transporter.sendMail(mailOptions);
-            console.log(`✅ Enrollment email sent to ${email}`);
-        } catch (emailError) {
-            console.error("❌ Error sending enrollment email:", emailError);
-            // Rollback DB entry if email fails
-            await Enrollment.deleteOne({ _id: enrollment._id });
-            return res.status(500).json({ msg: "Enrollment failed: Unable to send confirmation email." });
-        }
-
-        res.status(201).json({ msg: "Enrollment submitted successfully! Check your email for confirmation." });
-
-    } catch (err) {
-        console.error("❌ Enrollment route error:", err);
-        res.status(500).json({ msg: "Server error while processing enrollment." });
-    }
+  try {
+    const enrollment = new Enrollment(req.body);
+    await enrollment.save();
+    res.status(201).json({ msg: "Enrollment saved successfully!" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error while saving enrollment" });
+  }
 });
 
-// -------------------- ROOT ROUTE --------------------
-app.get("/", (req, res) => {
-    res.json({ message: "Backend is running 🚀" });
-});
+// Root
+app.get("/", (req, res) => res.json({ message: "Backend is running 🚀" }));
 
-// -------------------- START SERVER --------------------
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
