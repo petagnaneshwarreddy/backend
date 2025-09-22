@@ -19,7 +19,7 @@ app.use(cors({
   credentials: true
 }));
 
-// -------------------- Serve static files --------------------
+// -------------------- Serve profile images --------------------
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // -------------------- Multer Setup --------------------
@@ -32,14 +32,11 @@ const upload = multer({ storage });
 // -------------------- Nodemailer --------------------
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 transporter.verify(err => {
   if (err) console.error("❌ Nodemailer error:", err);
-  else console.log("✅ Nodemailer transporter ready");
+  else console.log("✅ Nodemailer ready");
 });
 
 // -------------------- MongoDB --------------------
@@ -47,30 +44,26 @@ mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
-.then(() => console.log("✅ MongoDB connected ✅"))
+.then(() => console.log("✅ MongoDB connected"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
 
 // -------------------- MODELS --------------------
-
-// Credential Model
 const CredentialSchema = new mongoose.Schema({
   username: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
+  email:    { type: String, required: true, unique: true },
   password: { type: String, required: true },
   profilePic: { type: String, default: "" }, // profile image
   createdAt: { type: Date, default: Date.now }
 });
 const Credential = mongoose.model("Credential", CredentialSchema);
 
-// OTP Model
 const OtpSchema = new mongoose.Schema({
   email: { type: String, required: true },
-  otp: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 300 } // 5 minutes
+  otp:   { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, expires: 300 }
 });
 const Otp = mongoose.model("Otp", OtpSchema);
 
-// Enrollment Model
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -90,10 +83,9 @@ const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
 app.post("/send-otp", async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
+    if (!email) return res.status(400).json({ message: "Email required" });
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
     await Otp.findOneAndUpdate(
       { email },
       { otp: otpCode, createdAt: new Date() },
@@ -104,11 +96,9 @@ app.post("/send-otp", async (req, res) => {
       from: process.env.EMAIL_USER,
       to: email,
       subject: "Your OTP Code",
-      html: `<p>Your OTP code is <strong>${otpCode}</strong>. It expires in 5 minutes.</p>`
+      html: `<p>Your OTP is <strong>${otpCode}</strong>. Expires in 5 min.</p>`
     };
-
     await transporter.sendMail(mailOptions);
-    console.log(`✅ OTP sent to ${email}: ${otpCode}`);
     res.status(200).json({ message: "OTP sent successfully!" });
 
   } catch (err) {
@@ -117,20 +107,17 @@ app.post("/send-otp", async (req, res) => {
   }
 });
 
-// Register (with OTP verification)
+// Register
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password, otp } = req.body;
-
     const otpRecord = await Otp.findOne({ email, otp });
-    if (!otpRecord) return res.status(400).json({ message: "Invalid or expired OTP" });
+    if (!otpRecord) return res.status(400).json({ message: "Invalid/expired OTP" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const user = new Credential({ username, email, password: hashedPassword });
     await user.save();
     await Otp.deleteOne({ _id: otpRecord._id });
-
     res.status(201).json({ message: "Registered successfully!" });
   } catch (err) {
     console.error(err);
@@ -141,19 +128,17 @@ app.post("/register", async (req, res) => {
 // Login (email or username)
 app.post("/login", async (req, res) => {
   try {
-    const { identifier, password } = req.body; // email or username
+    const { identifier, password } = req.body;
     if (!identifier || !password) return res.status(400).json({ message: "Username/email and password required" });
 
-    const user = await Credential.findOne({
-      $or: [{ email: identifier }, { username: identifier }]
-    });
+    const user = await Credential.findOne({ $or: [{ email: identifier }, { username: identifier }] });
     if (!user) return res.status(400).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
     const token = jwt.sign(
-      { id: user._id, email: user.email, username: user.username, profilePic: user.profilePic },
+      { id: user._id, email: user.email, username: user.username, profilePic: user.profilePic || "" },
       process.env.JWT_SECRET || "secretkey",
       { expiresIn: "1h" }
     );
@@ -165,22 +150,17 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Reset Password
+// Reset password
 app.post("/reset-password", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
     if (!email || !otp || !newPassword) return res.status(400).json({ message: "Email, OTP, and new password required" });
 
-    const otpRecord = await Otp.findOne({ email, otp: otp.toString() });
+    const otpRecord = await Otp.findOne({ email, otp });
     if (!otpRecord) return res.status(400).json({ message: "Invalid or expired OTP" });
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    const updated = await Credential.findOneAndUpdate(
-      { email },
-      { password: hashedPassword },
-      { new: true }
-    );
+    const updated = await Credential.findOneAndUpdate({ email }, { password: hashedPassword }, { new: true });
     if (!updated) return res.status(404).json({ message: "User not found" });
 
     await Otp.deleteOne({ _id: otpRecord._id });
@@ -191,14 +171,13 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
-// Update Profile Picture
+// -------------------- Profile: Upload/Update profile picture --------------------
 app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
   try {
     const { userId } = req.params;
-    const filePath = req.file ? `/uploads/${req.file.filename}` : null;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
-    if (!filePath) return res.status(400).json({ message: "No file uploaded" });
-
+    const filePath = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
     const updatedUser = await Credential.findByIdAndUpdate(
       userId,
       { profilePic: filePath },
@@ -206,7 +185,6 @@ app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
     );
 
     if (!updatedUser) return res.status(404).json({ message: "User not found" });
-
     res.status(200).json({ message: "Profile updated successfully!", profilePic: filePath });
   } catch (err) {
     console.error("❌ Profile update error:", err);
@@ -214,7 +192,7 @@ app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
   }
 });
 
-// Enrollment
+// Enrollment (optional)
 app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = new Enrollment(req.body);
@@ -229,6 +207,6 @@ app.post("/api/enroll", async (req, res) => {
 // Root
 app.get("/", (req, res) => res.json({ message: "Backend is running 🚀" }));
 
-// -------------------- Start Server --------------------
+// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
