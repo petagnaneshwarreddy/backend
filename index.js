@@ -19,17 +19,13 @@ app.use(cors({
   credentials: true
 }));
 
-// Serve profile images statically
+// -------------------- Serve static files --------------------
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // -------------------- Multer Setup --------------------
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "./uploads");
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  }
+  destination: (req, file, cb) => cb(null, "./uploads"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
 });
 const upload = multer({ storage });
 
@@ -59,10 +55,10 @@ mongoose.connect(process.env.MONGO_URI, {
 // Credential Model
 const CredentialSchema = new mongoose.Schema({
   username: { type: String, required: true },
-  email:    { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  profilePic: { type: String, default: "" },
-  createdAt:{ type: Date, default: Date.now }
+  profilePic: { type: String, default: "" }, // profile image
+  createdAt: { type: Date, default: Date.now }
 });
 const Credential = mongoose.model("Credential", CredentialSchema);
 
@@ -70,11 +66,11 @@ const Credential = mongoose.model("Credential", CredentialSchema);
 const OtpSchema = new mongoose.Schema({
   email: { type: String, required: true },
   otp: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 300 } // 5 min
+  createdAt: { type: Date, default: Date.now, expires: 300 } // 5 minutes
 });
 const Otp = mongoose.model("Otp", OtpSchema);
 
-// Enrollment Model (optional)
+// Enrollment Model
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -90,7 +86,7 @@ const Enrollment = mongoose.model("Enrollment", EnrollmentSchema);
 
 // -------------------- ROUTES --------------------
 
-// 🔹 Send OTP
+// Send OTP
 app.post("/send-otp", async (req, res) => {
   try {
     const { email } = req.body;
@@ -121,7 +117,7 @@ app.post("/send-otp", async (req, res) => {
   }
 });
 
-// 🔹 Register (OTP verification)
+// Register (with OTP verification)
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password, otp } = req.body;
@@ -142,7 +138,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// 🔹 Login (email or username)
+// Login (email or username)
 app.post("/login", async (req, res) => {
   try {
     const { identifier, password } = req.body; // email or username
@@ -169,7 +165,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// 🔹 Reset Password
+// Reset Password
 app.post("/reset-password", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
@@ -195,7 +191,7 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
-// 🔹 Profile: upload/update profile picture
+// Update Profile Picture
 app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
   try {
     const { userId } = req.params;
@@ -218,7 +214,7 @@ app.put("/profile/:userId", upload.single("profilePic"), async (req, res) => {
   }
 });
 
-// 🔹 Enrollment (optional)
+// Enrollment
 app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = new Enrollment(req.body);
@@ -230,10 +226,8 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// 🔹 Root
-app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🚀" });
-});
+// Root
+app.get("/", (req, res) => res.json({ message: "Backend is running 🚀" }));
 
 // -------------------- Start Server --------------------
 const PORT = process.env.PORT || 3000;
