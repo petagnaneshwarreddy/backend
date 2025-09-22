@@ -49,7 +49,7 @@ const CredentialSchema = new mongoose.Schema({
 });
 const Credential = mongoose.model("Credential", CredentialSchema);
 
-// 2. Enrollment = course enrollments (no passwords here)
+// 2. Enrollment = course enrollments
 const EnrollmentSchema = new mongoose.Schema({
   courseTitle: String,
   certificateId: String,
@@ -73,7 +73,7 @@ const Otp = mongoose.model("Otp", OtpSchema);
 
 /* -------------------- ROUTES -------------------- */
 
-// ✅ Send OTP
+// 🔹 Send OTP
 app.post("/send-otp", async (req, res) => {
   try {
     const { email } = req.body;
@@ -103,7 +103,7 @@ app.post("/send-otp", async (req, res) => {
   }
 });
 
-// ✅ Register (credentials only)
+// 🔹 Register (credentials only)
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password, otp } = req.body;
@@ -132,7 +132,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// ✅ Login (credentials only)
+// 🔹 Login (credentials only)
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -163,7 +163,42 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ✅ Save course enrollment (separate collection)
+// 🔹 Reset password after OTP verification
+app.post("/reset-password", async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    // check if OTP is valid
+    const otpRecord = await Otp.findOne({ email, otp });
+    if (!otpRecord) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
+
+    // hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // update existing credential
+    const updated = await Credential.findOneAndUpdate(
+      { email },
+      { password: hashedPassword },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // remove OTP
+    await Otp.deleteOne({ _id: otpRecord._id });
+
+    res.status(200).json({ message: "Password reset successful!" });
+  } catch (err) {
+    console.error("❌ Reset password error:", err);
+    res.status(500).json({ message: "Server error while resetting password" });
+  }
+});
+
+// 🔹 Save course enrollment
 app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = new Enrollment(req.body);
@@ -199,7 +234,7 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// ✅ Verify certificate by ID
+// 🔹 Verify certificate by ID
 app.get("/api/verify/:certificateId", async (req, res) => {
   try {
     const { certificateId } = req.params;
@@ -216,7 +251,7 @@ app.get("/api/verify/:certificateId", async (req, res) => {
   }
 });
 
-// ✅ Contact form route
+// 🔹 Contact form route
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
