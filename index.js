@@ -20,7 +20,7 @@ app.use(
       "https://skillfull-technologies.vercel.app",
       "http://localhost:3000"
     ],
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true
   })
 );
