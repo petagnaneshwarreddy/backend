@@ -74,14 +74,14 @@ const Enrollment = mongoose.model(
   })
 );
 
-const Otp = mongoose.model(
-  "Otp",
-  new mongoose.Schema({
-    email: String,
-    otp: String,
-    createdAt: { type: Date, default: Date.now, expires: 300 }
-  })
-);
+// const Otp = mongoose.model(
+//   "Otp",
+//   new mongoose.Schema({
+//     email: String,
+//     otp: String,
+//     createdAt: { type: Date, default: Date.now, expires: 300 }
+//   })
+// );
 
 // -------------------- ROUTES --------------------
 // -------------------- CERTIFICATE ID GENERATOR --------------------
@@ -97,62 +97,62 @@ function generateCertificateId() {
   return id;
 }
 // OTP SEND
-app.post("/send-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
+// app.post("/send-otp", async (req, res) => {
+//   try {
+//     const { email } = req.body;
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+//     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    await Otp.findOneAndUpdate(
-      { email },
-      { otp: otpCode },
-      { upsert: true, new: true }
-    );
+//     await Otp.findOneAndUpdate(
+//       { email },
+//       { otp: otpCode },
+//       { upsert: true, new: true }
+//     );
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Your OTP Code",
-      html: `<h3>Your OTP is: ${otpCode}</h3>
-             <p>This OTP will expire in 5 minutes.</p>`
-    });
+//     await transporter.sendMail({
+//       from: process.env.EMAIL_USER,
+//       to: email,
+//       subject: "Your OTP Code",
+//       html: `<h3>Your OTP is: ${otpCode}</h3>
+//              <p>This OTP will expire in 5 minutes.</p>`
+//     });
 
-    res.json({ msg: "Contact feature temporarily disabled" });
+//     res.json({ msg: "Contact feature temporarily disabled" });
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "OTP failed" });
-  }
-});
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "OTP failed" });
+//   }
+// });
 
 // REGISTER
-app.post("/register", async (req, res) => {
-  try {
-    const { username, email, password, otp } = req.body;
+// app.post("/register", async (req, res) => {
+//   try {
+//     const { username, email, password, otp } = req.body;
 
-    const otpRecord = await Otp.findOne({ email, otp });
+//     const otpRecord = await Otp.findOne({ email, otp });
 
-    if (!otpRecord) {
-      return res.status(400).json({ message: "Invalid OTP" });
-    }
+//     if (!otpRecord) {
+//       return res.status(400).json({ message: "Invalid OTP" });
+//     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+//     const hashedPassword = await bcrypt.hash(password, 10);
 
-    await Credential.create({
-      username,
-      email,
-      password: hashedPassword
-    });
+//     await Credential.create({
+//       username,
+//       email,
+//       password: hashedPassword
+//     });
 
-    await Otp.deleteOne({ _id: otpRecord._id });
+//     await Otp.deleteOne({ _id: otpRecord._id });
 
-    res.json({ message: "Registered successfully" });
+//     res.json({ message: "Registered successfully" });
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Registration failed" });
-  }
-});
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Registration failed" });
+//   }
+// });
 
 // LOGIN
 app.post("/login", async (req, res) => {
@@ -249,6 +249,46 @@ app.get("/api/admin/enrollments", async (req, res) => {
 
   }
 });
+// UPDATE ENROLLMENT (ADMIN EDIT)
+app.put("/api/admin/enrollments/:id", async (req, res) => {
+
+  try {
+
+    const updatedEnrollment = await Enrollment.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+
+    res.json(updatedEnrollment);
+
+  } catch (err) {
+
+    console.error(err);
+    res.status(500).json({ msg: "Update failed" });
+
+  }
+
+});
+
+
+// DELETE ENROLLMENT (ADMIN DELETE)
+app.delete("/api/admin/enrollments/:id", async (req, res) => {
+
+  try {
+
+    await Enrollment.findByIdAndDelete(req.params.id);
+
+    res.json({ msg: "Enrollment deleted successfully" });
+
+  } catch (err) {
+
+    console.error(err);
+    res.status(500).json({ msg: "Delete failed" });
+
+  }
+
+});
 
 // VERIFY CERTIFICATE
 app.get("/api/verify/:certificateId", async (req, res) => {
@@ -272,40 +312,48 @@ app.get("/api/verify/:certificateId", async (req, res) => {
 
 // CONTACT FORM
 app.post("/api/contact", async (req, res) => {
+
   try {
+
     const { name, email, message } = req.body;
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
-      subject: `Contact Message - ${name}`,
+    // Email to Admin
+    await resend.emails.send({
+      from: "onboarding@resend.dev",
+      to: "skillfulltec@gmail.com",
+      subject: `New Contact Message from ${name}`,
       html: `
         <h3>New Contact Message</h3>
-        <p>Name: ${name}</p>
-        <p>Email: ${email}</p>
+        <p><b>Name:</b> ${name}</p>
+        <p><b>Email:</b> ${email}</p>
         <p>${message}</p>
       `
     });
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+    // Auto reply to user
+    await resend.emails.send({
+      from: "onboarding@resend.dev",
       to: email,
-      subject: "Thanks for contacting us",
+      subject: "Thanks for contacting Skillfull Technologies",
       html: `
         <h3>Hello ${name}</h3>
-        <p>We received your message and will respond shortly.</p>
-        <p>Skillfull Technologies</p>
+        <p>We received your message.</p>
+        <p>Our team will contact you soon.</p>
+        <br/>
+        <b>Skillfull Technologies</b>
       `
     });
 
     res.json({ msg: "Message sent successfully" });
 
   } catch (err) {
+
     console.error(err);
     res.status(500).json({ msg: "Contact failed" });
-  }
-});
 
+  }
+
+});
 // ROOT
 app.get("/", (req, res) => {
   res.json({ message: "Backend running 🚀" });
