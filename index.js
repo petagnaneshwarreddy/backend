@@ -84,7 +84,18 @@ const Otp = mongoose.model(
 );
 
 // -------------------- ROUTES --------------------
+// -------------------- CERTIFICATE ID GENERATOR --------------------
 
+function generateCertificateId() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let id = "SFT-";
+
+  for (let i = 0; i < 4; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return id;
+}
 // OTP SEND
 app.post("/send-otp", async (req, res) => {
   try {
@@ -177,35 +188,42 @@ app.post("/login", async (req, res) => {
 // COURSE ENROLLMENT
 app.post("/api/enroll", async (req, res) => {
   try {
-    const enrollment = await Enrollment.create(req.body);
 
-   await resend.emails.send({
-  from: "onboarding@resend.dev",
-  to: enrollment.email,
-  subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
-  html: `
-    <h2>Hello ${enrollment.fullName}</h2>
+    const certificateId = generateCertificateId();
 
-    <p>You have successfully enrolled in:</p>
+    const enrollment = await Enrollment.create({
+      ...req.body,
+      certificateId
+    });
 
-    <h3>${enrollment.courseTitle}</h3>
 
-    <p>Your Certificate ID:</p>
-    <b>${enrollment.certificateId}</b>
+  await resend.emails.send({
+      from: "onboarding@resend.dev",
+      to: enrollment.email,
+      subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
+      html: `
+        <h2>Hello ${enrollment.fullName}</h2>
 
-    <p>Our team will contact you shortly.</p>
+        <p>You have successfully enrolled in:</p>
 
-    <p>
-    <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">
-    Join WhatsApp Community
-    </a>
-    </p>
+        <h3>${enrollment.courseTitle}</h3>
 
-    <br>
+        <p>Your Certificate ID:</p>
+        <b>${certificateId}</b>
 
-    <b>Skillfull Technologies</b>
-  `
-});
+        <p>Our team will contact you shortly.</p>
+
+        <p>
+        <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">
+        Join WhatsApp Community
+        </a>
+        </p>
+
+        <br>
+
+        <b>Skillfull Technologies</b>
+      `
+    });
 
     res.status(201).json({ msg: "Enrollment successful" });
 
