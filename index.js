@@ -2,7 +2,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
+// const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
@@ -26,20 +26,20 @@ app.use(
 );
 
 // -------------------- EMAIL SETUP --------------------
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+// const transporter = nodemailer.createTransport({
+//   host: "smtp.gmail.com",
+//   port: 587,
+//   secure: false,
+//   auth: {
+//     user: process.env.EMAIL_USER,
+//     pass: process.env.EMAIL_PASS
+//   }
+// });
 
-transporter.verify((err) => {
-  if (err) console.error("❌ Email setup error:", err);
-  else console.log("✅ Email server ready");
-});
+// transporter.verify((err) => {
+//   if (err) console.error("❌ Email setup error:", err);
+//   else console.log("✅ Email server ready");
+// });
 
 // -------------------- DATABASE --------------------
 mongoose
@@ -106,7 +106,7 @@ app.post("/send-otp", async (req, res) => {
              <p>This OTP will expire in 5 minutes.</p>`
     });
 
-    res.json({ message: "OTP sent successfully" });
+    res.json({ msg: "Contact feature temporarily disabled" });
 
   } catch (err) {
     console.error(err);
@@ -180,7 +180,7 @@ app.post("/api/enroll", async (req, res) => {
     const enrollment = await Enrollment.create(req.body);
 
    await resend.emails.send({
-  from: "Skillfull Technologies <info@skillfulltech.com>",
+  from: "onboarding@resend.dev",
   to: enrollment.email,
   subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
   html: `
