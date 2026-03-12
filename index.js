@@ -180,7 +180,7 @@ app.post("/api/enroll", async (req, res) => {
     const enrollment = await Enrollment.create(req.body);
 
    await resend.emails.send({
-  from: "Skillfull Technologies <onboarding@resend.dev>",
+  from: "Skillfull Technologies <info@skillfulltech.com>",
   to: enrollment.email,
   subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
   html: `
