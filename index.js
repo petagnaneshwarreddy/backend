@@ -7,6 +7,8 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 const app = express();
 
 // -------------------- MIDDLEWARE --------------------
@@ -177,32 +179,33 @@ app.post("/api/enroll", async (req, res) => {
   try {
     const enrollment = await Enrollment.create(req.body);
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: enrollment.email,
-      subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
-      html: `
-        <h2>Hello ${enrollment.fullName}</h2>
+   await resend.emails.send({
+  from: "Skillfull Technologies <onboarding@resend.dev>",
+  to: enrollment.email,
+  subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
+  html: `
+    <h2>Hello ${enrollment.fullName}</h2>
 
-        <p>You have successfully enrolled in:</p>
+    <p>You have successfully enrolled in:</p>
 
-        <h3>${enrollment.courseTitle}</h3>
+    <h3>${enrollment.courseTitle}</h3>
 
-        <p><b>Certificate ID:</b> ${enrollment.certificateId}</p>
+    <p>Your Certificate ID:</p>
+    <b>${enrollment.certificateId}</b>
 
-        <p>Our team will contact you shortly.</p>
+    <p>Our team will contact you shortly.</p>
 
-        <br>
+    <p>
+    <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">
+    Join WhatsApp Community
+    </a>
+    </p>
 
-        <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">
-        Join WhatsApp Community
-        </a>
+    <br>
 
-        <br><br>
-
-        <b>Skillfull Technologies</b>
-      `
-    });
+    <b>Skillfull Technologies</b>
+  `
+});
 
     res.status(201).json({ msg: "Enrollment successful" });
 
