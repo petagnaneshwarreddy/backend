@@ -232,6 +232,23 @@ app.post("/api/enroll", async (req, res) => {
     res.status(500).json({ msg: "Enrollment failed" });
   }
 });
+// -------------------- ADMIN ROUTE --------------------
+
+// GET ALL ENROLLMENTS (Admin Dashboard)
+app.get("/api/admin/enrollments", async (req, res) => {
+  try {
+
+    const enrollments = await Enrollment.find().sort({ createdAt: -1 });
+
+    res.json(enrollments);
+
+  } catch (err) {
+
+    console.error(err);
+    res.status(500).json({ msg: "Failed to fetch enrollments" });
+
+  }
+});
 
 // VERIFY CERTIFICATE
 app.get("/api/verify/:certificateId", async (req, res) => {
@@ -251,6 +268,7 @@ app.get("/api/verify/:certificateId", async (req, res) => {
     res.status(500).json({ msg: "Verification error" });
   }
 });
+
 
 // CONTACT FORM
 app.post("/api/contact", async (req, res) => {
