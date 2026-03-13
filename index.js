@@ -198,7 +198,7 @@ app.post("/api/enroll", async (req, res) => {
 
 
   await resend.emails.send({
-      from: "onboarding@resend.dev",
+      from: "noreply@yourdomain.com",
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
       html: `
@@ -319,7 +319,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Email to Admin
     await resend.emails.send({
-      from: "onboarding@resend.dev",
+       from: "noreply@yourdomain.com",
       to: "skillfulltec@gmail.com",
       subject: `New Contact Message from ${name}`,
       html: `
@@ -332,7 +332,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Auto reply to user
     await resend.emails.send({
-      from: "onboarding@resend.dev",
+       from: "noreply@yourdomain.com", 
       to: email,
       subject: "Thanks for contacting Skillfull Technologies",
       html: `
@@ -346,11 +346,9 @@ app.post("/api/contact", async (req, res) => {
 
     res.json({ msg: "Message sent successfully" });
 
-  } catch (err) {
-
-    console.error(err);
+   } catch (err) {
+    console.error("Contact error:", err); 
     res.status(500).json({ msg: "Contact failed" });
-
   }
 
 });
