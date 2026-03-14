@@ -70,7 +70,14 @@ const Enrollment = mongoose.model(
     collegeName: String,
     state: String,
     duration: String,
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+
+    // ── Admin dashboard fields ──
+    paymentStatus: { type: String, enum: ["paid", "unpaid"], default: "unpaid" },
+    amountPaid:    { type: Number, default: 0 },
+    advancePaid:   { type: Number, default: 0 },
+    certIssued:    { type: Boolean, default: false },
+    offerSent:     { type: Boolean, default: false }
   })
 );
 
