@@ -200,7 +200,7 @@ app.post("/api/enroll", async (req, res) => {
 
 
   await resend.emails.send({
-      from: "noreply@yourdomain.com",
+      from: "onboarding@resend.dev",
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
       html: `
@@ -321,7 +321,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Email to Admin
     await resend.emails.send({
-       from: "noreply@yourdomain.com",
+       from: "onboarding@resend.dev",
       to: "skillfulltec@gmail.com",
       subject: `New Contact Message from ${name}`,
       html: `
@@ -334,7 +334,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Auto reply to user
     await resend.emails.send({
-       from: "noreply@yourdomain.com", 
+       from: "onboarding@resend.dev",
       to: email,
       subject: "Thanks for contacting Skillfull Technologies",
       html: `
@@ -365,7 +365,7 @@ app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) 
       content:  f.buffer.toString("base64"),
     }));
     await resend.emails.send({
-      from: "noreply@yourdomain.com",
+      from: "onboarding@resend.dev",
       to, subject,
       html: `<div style="font-family:sans-serif;padding:24px">
         <p style="font-size:15px;line-height:1.7">${personalizedBody.replace(/\n/g,"<br>")}</p>
