@@ -5,8 +5,6 @@ const cors = require("cors");
 // const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
 require("dotenv").config();
 
 const { Resend } = require("resend");
@@ -207,7 +205,7 @@ app.post("/api/enroll", async (req, res) => {
 
 
   await resend.emails.send({
-      from: "Skillfull Technologies <skillfulltec@gmail.com>",
+      from: "Skillfull Technologies <onboarding@resend.dev>",
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
       html: `
@@ -328,7 +326,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Email to Admin
     await resend.emails.send({
-       from: "Skillfull Technologies <skillfulltec@gmail.com>",
+       from: "Skillfull Technologies <onboarding@resend.dev>",
       to: "skillfulltec@gmail.com",
       subject: `New Contact Message from ${name}`,
       html: `
@@ -341,7 +339,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Auto reply to user
     await resend.emails.send({
-      from: "Skillfull Technologies <skillfulltec@gmail.com>",
+      from: "Skillfull Technologies <onboarding@resend.dev>",
       to: email,
       subject: "Thanks for contacting Skillfull Technologies",
       html: `
@@ -361,53 +359,7 @@ app.post("/api/contact", async (req, res) => {
   }
 
 });
-// SEND EMAIL (Admin Email Page)
 
-
-app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) => {
-  try {
-
-    const { to, toName, subject, body } = req.body;
-
-    if (!to || !subject || !body) {
-      return res.status(400).json({ msg: "Missing required fields" });
-    }
-
-    const personalizedBody = body.replace(/\{name\}/gi, toName || "Student");
-
-    const attachments = (req.files || []).map(f => ({
-      filename: f.originalname,
-      content: f.buffer.toString("base64"),
-      encoding: "base64"
-    }));
-
-    await resend.emails.send({
-      from: "Skillfull Technologies <skillfulltec@gmail.com>",
-      to: to,
-      reply_to: "skillfulltec@gmail.com",
-      subject: subject,
-      html: `
-        <div style="font-family: Arial; max-width:600px; margin:auto;">
-          ${personalizedBody.replace(/\n/g,"<br/>")}
-
-          <br/><br/>
-          <hr/>
-
-          <p style="font-size:12px;color:#999">
-            Skillfull Technologies • Admin Portal
-          </p>
-        </div>
-      `,
-      attachments
-    });
-
-    res.json({ msg: "Email sent successfully" });
-
-  } catch (err) {
-    console.error("Send email error:", err);
-    res.status(500).json({ msg: "Email send failed", error: err.message });
-  }
-});
 // ROOT
 app.get("/", (req, res) => {
   res.json({ message: "Backend running 🚀" });
