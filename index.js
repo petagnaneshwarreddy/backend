@@ -2,14 +2,14 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-// const nodemailer = require("nodemailer");
+const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 require("dotenv").config();
 
-const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
+// const { Resend } = require("resend");
+// const resend = new Resend(process.env.RESEND_API_KEY);
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -28,15 +28,15 @@ app.use(
 );
 
 // -------------------- EMAIL SETUP --------------------
-// const transporter = nodemailer.createTransport({
-//   host: "smtp.gmail.com",
-//   port: 587,
-//   secure: false,
-//   auth: {
-//     user: process.env.EMAIL_USER,
-//     pass: process.env.EMAIL_PASS
-//   }
-// });
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
 // transporter.verify((err) => {
 //   if (err) console.error("❌ Email setup error:", err);
@@ -199,33 +199,21 @@ app.post("/api/enroll", async (req, res) => {
     });
 
 
-  await resend.emails.send({
-      from: "onboarding@resend.dev",
-      to: enrollment.email,
-      subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
-      html: `
-        <h2>Hello ${enrollment.fullName}</h2>
-
-        <p>You have successfully enrolled in:</p>
-
-        <h3>${enrollment.courseTitle}</h3>
-
-        <p>Your Certificate ID:</p>
-        <b>${certificateId}</b>
-
-        <p>Our team will contact you shortly.</p>
-
-        <p>
-        <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">
-        Join WhatsApp Community
-        </a>
-        </p>
-
-        <br>
-
-        <b>Skillfull Technologies</b>
-      `
-    });
+await transporter.sendMail({
+  from: process.env.EMAIL_USER,
+  to: enrollment.email,
+  subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
+  html: `
+    <h2>Hello ${enrollment.fullName}</h2>
+    <p>You have successfully enrolled in:</p>
+    <h3>${enrollment.courseTitle}</h3>
+    <p>Your Certificate ID:</p>
+    <b>${certificateId}</b>
+    <p>Our team will contact you shortly.</p>
+    <p><a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join WhatsApp Community</a></p>
+    <br><b>Skillfull Technologies</b>
+  `
+});
 
     res.status(201).json({ msg: "Enrollment successful" });
 
@@ -320,31 +308,30 @@ app.post("/api/contact", async (req, res) => {
     const { name, email, message } = req.body;
 
     // Email to Admin
-    await resend.emails.send({
-       from: "onboarding@resend.dev",
-      to: "skillfulltec@gmail.com",
-      subject: `New Contact Message from ${name}`,
-      html: `
-        <h3>New Contact Message</h3>
-        <p><b>Name:</b> ${name}</p>
-        <p><b>Email:</b> ${email}</p>
-        <p>${message}</p>
-      `
-    });
+   await transporter.sendMail({
+  from: process.env.EMAIL_USER,
+  to: process.env.EMAIL_USER,
+  subject: `New Contact Message from ${name}`,
+  html: `
+    <h3>New Contact Message</h3>
+    <p><b>Name:</b> ${name}</p>
+    <p><b>Email:</b> ${email}</p>
+    <p>${message}</p>
+  `
+});
 
     // Auto reply to user
-    await resend.emails.send({
-       from: "onboarding@resend.dev",
-      to: email,
-      subject: "Thanks for contacting Skillfull Technologies",
-      html: `
-        <h3>Hello ${name}</h3>
-        <p>We received your message.</p>
-        <p>Our team will contact you soon.</p>
-        <br/>
-        <b>Skillfull Technologies</b>
-      `
-    });
+    await transporter.sendMail({
+  from: process.env.EMAIL_USER,
+  to: email,
+  subject: "Thanks for contacting Skillfull Technologies",
+  html: `
+    <h3>Hello ${name}</h3>
+    <p>We received your message.</p>
+    <p>Our team will contact you soon.</p>
+    <br/><b>Skillfull Technologies</b>
+  `
+});
 
     res.json({ msg: "Message sent successfully" });
 
@@ -360,20 +347,24 @@ app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) 
   try {
     const { to, toName, subject, body } = req.body;
     const personalizedBody = body.replace(/\{name\}/gi, toName || "Student");
-    const attachments = (req.files || []).map(f => ({
-      filename: f.originalname,
-      content:  f.buffer.toString("base64"),
-    }));
-    await resend.emails.send({
-      from: "onboarding@resend.dev",
-      to, subject,
-      html: `<div style="font-family:sans-serif;padding:24px">
-        <p style="font-size:15px;line-height:1.7">${personalizedBody.replace(/\n/g,"<br>")}</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-        <p style="font-size:12px;color:#888"><b>Skillfull Technologies</b></p>
-      </div>`,
-      attachments,
-    });
+    // const attachments = (req.files || []).map(f => ({
+    //   filename: f.originalname,
+    //   content:  f.buffer.toString("base64"),
+    // }));
+    await transporter.sendMail({
+  from: process.env.EMAIL_USER,
+  to,
+  subject,
+  html: `<div style="font-family:sans-serif;padding:24px">
+    <p style="font-size:15px;line-height:1.7">${personalizedBody.replace(/\n/g,"<br>")}</p>
+    <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+    <p style="font-size:12px;color:#888"><b>Skillfull Technologies</b></p>
+  </div>`,
+  attachments: (req.files || []).map(f => ({
+    filename: f.originalname,
+    content:  f.buffer,
+  })),
+});
     res.json({ msg: "Email sent successfully" });
   } catch (err) {
     console.error("Send email error:", err);
