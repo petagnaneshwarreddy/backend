@@ -5,6 +5,8 @@ const cors = require("cors");
 // const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
 require("dotenv").config();
 
 const { Resend } = require("resend");
@@ -358,6 +360,46 @@ app.post("/api/contact", async (req, res) => {
     res.status(500).json({ msg: "Contact failed" });
   }
 
+});
+// SEND EMAIL (Admin Email Page)
+
+
+app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) => {
+  try {
+    const { to, toName, subject, body } = req.body;
+
+    // Replace {name} placeholder with actual student name
+    const personalizedBody = body.replace(/\{name\}/gi, toName || "Student");
+
+    // Build attachments array for Resend
+    const attachments = (req.files || []).map(f => ({
+      filename: f.originalname,
+      content: f.buffer.toString("base64"),
+    }));
+
+    await resend.emails.send({
+      from: "Skillfull Technologies <onboarding@resend.dev>",
+      to: to,
+      subject: subject,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${personalizedBody.replace(/\n/g, "<br/>")}
+          <br/><br/>
+          <hr style="border: none; border-top: 1px solid #e3e6ea; margin: 24px 0;"/>
+          <p style="font-size: 12px; color: #9aa0ac;">
+            Skillfull Technologies · Admin Portal
+          </p>
+        </div>
+      `,
+      attachments: attachments,
+    });
+
+    res.json({ msg: "Email sent successfully" });
+
+  } catch (err) {
+    console.error("Send email error:", err);
+    res.status(500).json({ msg: "Email send failed", error: err.message });
+  }
 });
 // ROOT
 app.get("/", (req, res) => {
