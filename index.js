@@ -207,7 +207,7 @@ app.post("/api/enroll", async (req, res) => {
 
 
   await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+      from: "Skillfull Technologies <skillfulltec@gmail.com>",
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
       html: `
@@ -328,7 +328,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Email to Admin
     await resend.emails.send({
-       from: "Skillfull Technologies <onboarding@resend.dev>",
+       from: "Skillfull Technologies <skillfulltec@gmail.com>",
       to: "skillfulltec@gmail.com",
       subject: `New Contact Message from ${name}`,
       html: `
@@ -341,7 +341,7 @@ app.post("/api/contact", async (req, res) => {
 
     // Auto reply to user
     await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+      from: "Skillfull Technologies <skillfulltec@gmail.com>",
       to: email,
       subject: "Thanks for contacting Skillfull Technologies",
       html: `
@@ -366,32 +366,39 @@ app.post("/api/contact", async (req, res) => {
 
 app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) => {
   try {
+
     const { to, toName, subject, body } = req.body;
 
-    // Replace {name} placeholder with actual student name
+    if (!to || !subject || !body) {
+      return res.status(400).json({ msg: "Missing required fields" });
+    }
+
     const personalizedBody = body.replace(/\{name\}/gi, toName || "Student");
 
-    // Build attachments array for Resend
     const attachments = (req.files || []).map(f => ({
       filename: f.originalname,
       content: f.buffer.toString("base64"),
+      encoding: "base64"
     }));
 
     await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+      from: "Skillfull Technologies <skillfulltec@gmail.com>",
       to: to,
+      reply_to: "skillfulltec@gmail.com",
       subject: subject,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          ${personalizedBody.replace(/\n/g, "<br/>")}
+        <div style="font-family: Arial; max-width:600px; margin:auto;">
+          ${personalizedBody.replace(/\n/g,"<br/>")}
+
           <br/><br/>
-          <hr style="border: none; border-top: 1px solid #e3e6ea; margin: 24px 0;"/>
-          <p style="font-size: 12px; color: #9aa0ac;">
-            Skillfull Technologies · Admin Portal
+          <hr/>
+
+          <p style="font-size:12px;color:#999">
+            Skillfull Technologies • Admin Portal
           </p>
         </div>
       `,
-      attachments: attachments,
+      attachments
     });
 
     res.json({ msg: "Email sent successfully" });
