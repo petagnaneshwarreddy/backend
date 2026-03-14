@@ -5,11 +5,13 @@ const cors = require("cors");
 // const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
 require("dotenv").config();
 
 const { Resend } = require("resend");
 const resend = new Resend(process.env.RESEND_API_KEY);
 const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
 
 // -------------------- MIDDLEWARE --------------------
 app.use(express.json());
@@ -351,6 +353,32 @@ app.post("/api/contact", async (req, res) => {
     res.status(500).json({ msg: "Contact failed" });
   }
 
+});
+
+
+app.post("/api/admin/send-email", upload.array("attachments"), async (req, res) => {
+  try {
+    const { to, toName, subject, body } = req.body;
+    const personalizedBody = body.replace(/\{name\}/gi, toName || "Student");
+    const attachments = (req.files || []).map(f => ({
+      filename: f.originalname,
+      content:  f.buffer.toString("base64"),
+    }));
+    await resend.emails.send({
+      from: "noreply@yourdomain.com",
+      to, subject,
+      html: `<div style="font-family:sans-serif;padding:24px">
+        <p style="font-size:15px;line-height:1.7">${personalizedBody.replace(/\n/g,"<br>")}</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+        <p style="font-size:12px;color:#888"><b>Skillfull Technologies</b></p>
+      </div>`,
+      attachments,
+    });
+    res.json({ msg: "Email sent successfully" });
+  } catch (err) {
+    console.error("Send email error:", err);
+    res.status(500).json({ msg: "Failed to send email" });
+  }
 });
 // ROOT
 app.get("/", (req, res) => {
