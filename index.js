@@ -7,9 +7,54 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 require("dotenv").config();
 
+const nodemailer = require("nodemailer");
 const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
 const app = express();
+
+// ── Resend (primary) ──
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// ── Nodemailer Gmail (fallback) ──
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,  // skillfulltec@gmail.com
+    pass: process.env.EMAIL_PASS,  // Gmail App Password (16-char)
+  },
+});
+
+transporter.verify((err) => {
+  if (err) console.warn("⚠️  Gmail SMTP not ready:", err.message);
+  else     console.log("✅ Gmail SMTP ready");
+});
+
+// ── Smart sendMail: tries Resend first, falls back to Gmail SMTP ──
+async function sendMail({ to, subject, html, text }) {
+  const plainText = text || html.replace(/<[^>]+>/g, "");
+
+  // Try Resend first
+  if (process.env.RESEND_API_KEY) {
+    try {
+      await resend.emails.send({
+        from: "Skillfull Technologies <onboarding@resend.dev>",
+        to, subject, html,
+        text: plainText,
+      });
+      console.log(`✅ [Resend] Email sent to ${to}`);
+      return;
+    } catch (err) {
+      console.warn("⚠️  Resend failed, trying Gmail SMTP…", err.message);
+    }
+  }
+
+  // Fallback to Gmail SMTP
+  await transporter.sendMail({
+    from: `"Skillfull Technologies" <${process.env.EMAIL_USER}>`,
+    to, subject, html,
+    text: plainText,
+  });
+  console.log(`✅ [Gmail SMTP] Email sent to ${to}`);
+}
 
 // -------------------- MIDDLEWARE --------------------
 app.use(express.json());
@@ -132,8 +177,7 @@ app.post("/api/enroll", async (req, res) => {
     const certificateId = generateCertificateId();
     const enrollment = await Enrollment.create({ ...req.body, certificateId });
 
-    await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+    await sendMail({
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
       html: `
@@ -298,8 +342,7 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
       const enrollment = await Enrollment.findOne({ certificateId: cert.certificateId });
       if (enrollment?.email) {
         try {
-          await resend.emails.send({
-            from: "Skillfull Technologies <onboarding@resend.dev>",
+          await sendMail({
             to: enrollment.email,
             subject: "Your Certificate Has Been Approved! 🏅",
             html: `
@@ -332,8 +375,7 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
       const enrollment = await Enrollment.findOne({ certificateId: cert.certificateId });
       if (enrollment?.email) {
         try {
-          await resend.emails.send({
-            from: "Skillfull Technologies <onboarding@resend.dev>",
+          await sendMail({
             to: enrollment.email,
             subject: "Certificate Request Update — Skillfull Technologies",
             html: `
@@ -408,8 +450,7 @@ app.post("/api/admin/send-email", async (req, res) => {
     if (!to || !subject || !html) {
       return res.status(400).json({ msg: "to, subject and html are required" });
     }
-    await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+    await sendMail({
       to, subject, html,
       text: text || html.replace(/<[^>]+>/g, ""),
     });
@@ -426,8 +467,7 @@ app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
 
-    await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+    await sendMail({
       to: "skillfulltec@gmail.com",
       subject: `New Contact Message from ${name}`,
       html: `
@@ -438,8 +478,7 @@ app.post("/api/contact", async (req, res) => {
       `
     });
 
-    await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
+    await sendMail({
       to: email,
       subject: "Thanks for contacting Skillfull Technologies",
       html: `
