@@ -16,38 +16,36 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ── Nodemailer Gmail (fallback) ──
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,           // 587 STARTTLS — Render allows this (465 SSL is blocked)
+  secure: false,       // false for STARTTLS
   auth: {
     user: process.env.EMAIL_USER,  // skillfulltec@gmail.com
-    pass: process.env.EMAIL_PASS,  // Gmail App Password (16-char)
+    pass: process.env.EMAIL_PASS,  // Gmail App Password (16-char, no spaces)
   },
+  tls: {
+    rejectUnauthorized: false,
+    ciphers: "SSLv3",
+  },
+  connectionTimeout: 10000,  // 10s timeout
+  greetingTimeout:   10000,
+  socketTimeout:     15000,
 });
 
 transporter.verify((err) => {
-  if (err) console.warn("⚠️  Gmail SMTP not ready:", err.message);
-  else     console.log("✅ Gmail SMTP ready");
+  if (err) {
+    console.warn("⚠️  Gmail SMTP not ready:", err.message);
+    console.warn("   → Render may block port 587 on free tier. Resend will be used as fallback.");
+  } else {
+    console.log("✅ Gmail SMTP ready on port 587 — " + process.env.EMAIL_USER);
+  }
 });
 
-// ── Smart sendMail: Gmail SMTP first, Resend as fallback (only if domain verified) ──
+// ── Smart sendMail: Resend first → Nodemailer (Gmail SMTP) fallback ──
 async function sendMail({ to, subject, html, text }) {
   const plainText = text || html.replace(/<[^>]+>/g, "");
 
-  // Try Gmail SMTP first (works for all recipients, no domain restriction)
-  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-    try {
-      await transporter.sendMail({
-        from: `"Skillfull Technologies" <${process.env.EMAIL_USER}>`,
-        to, subject, html,
-        text: plainText,
-      });
-      console.log(`✅ [Gmail SMTP] Email sent to ${to}`);
-      return;
-    } catch (err) {
-      console.warn("⚠️  Gmail SMTP failed, trying Resend…", err.message);
-    }
-  }
-
-  // Fallback to Resend (only works if your domain is verified in Resend)
+  // 1️⃣ Try Resend first
   if (process.env.RESEND_API_KEY) {
     try {
       await resend.emails.send({
@@ -58,12 +56,33 @@ async function sendMail({ to, subject, html, text }) {
       console.log(`✅ [Resend] Email sent to ${to}`);
       return;
     } catch (err) {
-      console.error("❌ Resend also failed:", err.message);
+      console.warn(`⚠️  Resend failed (${err.message}) — falling back to Gmail SMTP…`);
+    }
+  }
+
+  // 2️⃣ Fallback: Gmail SMTP via Nodemailer
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"Skillfull Technologies" <${process.env.EMAIL_USER}>`,
+        to, subject, html,
+        text: plainText,
+      });
+      console.log(`✅ [Gmail SMTP] Email sent to ${to} — messageId: ${info.messageId}`);
+      return;
+    } catch (err) {
+      console.error(`❌ [Gmail SMTP] Failed to send to ${to}:`, err.message);
+      if (err.message.includes("Invalid login") || err.message.includes("Username and Password")) {
+        console.error("   → Wrong App Password. Go to myaccount.google.com/apppasswords and regenerate.");
+      }
+      if (err.message.includes("Less secure")) {
+        console.error("   → Enable App Passwords: myaccount.google.com/apppasswords");
+      }
       throw err;
     }
   }
 
-  throw new Error("No email provider configured. Set EMAIL_USER+EMAIL_PASS or RESEND_API_KEY.");
+  throw new Error("No email provider configured. Set RESEND_API_KEY or EMAIL_USER+EMAIL_PASS.");
 }
 
 // -------------------- MIDDLEWARE --------------------
@@ -510,6 +529,21 @@ app.post("/api/contact", async (req, res) => {
 // -------------------- ROOT --------------------
 app.get("/", (req, res) => {
   res.json({ message: "Backend running 🚀" });
+});
+
+// ── TEST EMAIL — visit /api/test-email?to=yourmail@gmail.com
+app.get("/api/test-email", async (req, res) => {
+  const to = req.query.to || process.env.EMAIL_USER;
+  try {
+    await sendMail({
+      to,
+      subject: "Skillfull Backend — Email Test",
+      html: `<h2>Email working!</h2><p>Sent at ${new Date().toLocaleString()}</p><b>Skillfull Technologies</b>`,
+    });
+    res.json({ msg: `Email sent to ${to}` });
+  } catch (err) {
+    res.status(500).json({ msg: "Email failed", error: err.message });
+  }
 });
 
 // -------------------- SERVER --------------------
