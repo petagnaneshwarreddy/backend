@@ -401,6 +401,27 @@ app.get("/api/verify/:certificateId", async (req, res) => {
 
 // -------------------- CONTACT ROUTE --------------------
 
+// ── SEND EMAIL (from Template page) ──
+app.post("/api/admin/send-email", async (req, res) => {
+  try {
+    const { to, subject, html, text } = req.body;
+    if (!to || !subject || !html) {
+      return res.status(400).json({ msg: "to, subject and html are required" });
+    }
+    await resend.emails.send({
+      from: "Skillfull Technologies <onboarding@resend.dev>",
+      to, subject, html,
+      text: text || html.replace(/<[^>]+>/g, ""),
+    });
+    console.log(`✅ Email sent to ${to}: ${subject}`);
+    res.json({ msg: "Email sent successfully" });
+  } catch (err) {
+    console.error("Send email error:", err);
+    res.status(500).json({ msg: "Failed to send email", error: err.message });
+  }
+});
+
+// -------------------- CONTACT ROUTE --------------------
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
