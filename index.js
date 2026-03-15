@@ -28,11 +28,26 @@ transporter.verify((err) => {
   else     console.log("✅ Gmail SMTP ready");
 });
 
-// ── Smart sendMail: tries Resend first, falls back to Gmail SMTP ──
+// ── Smart sendMail: Gmail SMTP first, Resend as fallback (only if domain verified) ──
 async function sendMail({ to, subject, html, text }) {
   const plainText = text || html.replace(/<[^>]+>/g, "");
 
-  // Try Resend first
+  // Try Gmail SMTP first (works for all recipients, no domain restriction)
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      await transporter.sendMail({
+        from: `"Skillfull Technologies" <${process.env.EMAIL_USER}>`,
+        to, subject, html,
+        text: plainText,
+      });
+      console.log(`✅ [Gmail SMTP] Email sent to ${to}`);
+      return;
+    } catch (err) {
+      console.warn("⚠️  Gmail SMTP failed, trying Resend…", err.message);
+    }
+  }
+
+  // Fallback to Resend (only works if your domain is verified in Resend)
   if (process.env.RESEND_API_KEY) {
     try {
       await resend.emails.send({
@@ -43,17 +58,12 @@ async function sendMail({ to, subject, html, text }) {
       console.log(`✅ [Resend] Email sent to ${to}`);
       return;
     } catch (err) {
-      console.warn("⚠️  Resend failed, trying Gmail SMTP…", err.message);
+      console.error("❌ Resend also failed:", err.message);
+      throw err;
     }
   }
 
-  // Fallback to Gmail SMTP
-  await transporter.sendMail({
-    from: `"Skillfull Technologies" <${process.env.EMAIL_USER}>`,
-    to, subject, html,
-    text: plainText,
-  });
-  console.log(`✅ [Gmail SMTP] Email sent to ${to}`);
+  throw new Error("No email provider configured. Set EMAIL_USER+EMAIL_PASS or RESEND_API_KEY.");
 }
 
 // -------------------- MIDDLEWARE --------------------
