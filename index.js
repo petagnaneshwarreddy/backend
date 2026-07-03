@@ -91,10 +91,10 @@ app.use(express.json());
 app.use(
   cors({
     origin: [
-      "https://skillfull-technologies.vercel.app",
-      "http://localhost:3000"
+      "http://localhost:3000",
+      "https://skillfulltechnologies.netlify.app"
     ],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
   })
 );
