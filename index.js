@@ -219,38 +219,39 @@ app.post("/send-otp", async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    const SibApiV3Sdk = require("sib-api-v3-sdk");
+    await sendMail({
+  to: email,
+  subject: "Skillfull Technologies - Email Verification OTP",
+  html: `
+    <div style="font-family:Arial,sans-serif">
+      <h2>Email Verification</h2>
 
-const apiInstance = new brevo.TransactionalEmailsApi();
+      <p>Hello,</p>
 
-apiInstance.setApiKey(
-  brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY
-);
+      <p>Your verification code is:</p>
 
-const sendSmtpEmail = new brevo.SendSmtpEmail();
+      <h1 style="
+        background:#2563eb;
+        color:white;
+        padding:15px;
+        display:inline-block;
+        border-radius:8px;
+        letter-spacing:4px;
+      ">
+        ${otp}
+      </h1>
 
-sendSmtpEmail.sender = {
-  name: "Skillfull Technologies",
-  email: "skillfulltec@gmail.com",
-};
+      <p>This OTP is valid for <b>10 minutes</b>.</p>
 
-sendSmtpEmail.to = [
-  {
-    email: email,
-  },
-];
+      <p>If you didn't request this OTP, please ignore this email.</p>
 
-sendSmtpEmail.subject = "Your Skillfull Technologies verification code";
+      <br>
 
-sendSmtpEmail.htmlContent = `
-<h2>Verify your email</h2>
-<p>Your OTP is:</p>
-<h1>${otp}</h1>
-<p>This OTP expires in 10 minutes.</p>
-`;
-
-await apiInstance.sendTransacEmail(sendSmtpEmail);
+      <b>Skillfull Technologies</b>
+    </div>
+  `,
+  text: `Your OTP is ${otp}. It expires in 10 minutes.`,
+});
 
     console.log(`✅ OTP sent to ${email}`);
     res.json({ message: "OTP sent to your email." });
