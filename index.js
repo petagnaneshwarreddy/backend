@@ -220,38 +220,38 @@ app.post("/send-otp", async (req, res) => {
     );
 
     await sendMail({
-  to: email,
-  subject: "Skillfull Technologies - Email Verification OTP",
-  html: `
-    <div style="font-family:Arial,sans-serif">
-      <h2>Email Verification</h2>
+      to: email,
+      subject: "Skillfull Technologies - Email Verification OTP",
+      html: `
+        <div style="font-family:Arial,sans-serif">
+          <h2>Email Verification</h2>
 
-      <p>Hello,</p>
+          <p>Hello,</p>
 
-      <p>Your verification code is:</p>
+          <p>Your verification code is:</p>
 
-      <h1 style="
-        background:#2563eb;
-        color:white;
-        padding:15px;
-        display:inline-block;
-        border-radius:8px;
-        letter-spacing:4px;
-      ">
-        ${otp}
-      </h1>
+          <h1 style="
+            background:#2563eb;
+            color:white;
+            padding:15px;
+            display:inline-block;
+            border-radius:8px;
+            letter-spacing:4px;
+          ">
+            ${otp}
+          </h1>
 
-      <p>This OTP is valid for <b>10 minutes</b>.</p>
+          <p>This OTP is valid for <b>10 minutes</b>.</p>
 
-      <p>If you didn't request this OTP, please ignore this email.</p>
+          <p>If you didn't request this OTP, please ignore this email.</p>
 
-      <br>
+          <br>
 
-      <b>Skillfull Technologies</b>
-    </div>
-  `,
-  text: `Your OTP is ${otp}. It expires in 10 minutes.`,
-});
+          <b>Skillfull Technologies</b>
+        </div>
+      `,
+      text: `Your OTP is ${otp}. It expires in 10 minutes.`,
+    });
 
     console.log(`✅ OTP sent to ${email}`);
     res.json({ message: "OTP sent to your email." });
@@ -325,13 +325,27 @@ app.post("/register", async (req, res) => {
 });
 
 // LOGIN
+// Accepts "identifier" (username OR email) to match the frontend's
+// "Username or email" field, and falls back to "email" for backwards
+// compatibility with any older callers that still send that key directly.
 app.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await Credential.findOne({ email });
+    const { identifier, email, password } = req.body;
+    const loginValue = identifier || email;
+
+    if (!loginValue || !password) {
+      return res.status(400).json({ message: "Username/email and password are required" });
+    }
+
+    const user = await Credential.findOne({
+      $or: [{ email: loginValue }, { username: loginValue }],
+    });
+
     if (!user) return res.status(400).json({ message: "User not found" });
+
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(400).json({ message: "Invalid password" });
+
     const token = jwt.sign(
       { id: user._id, email: user.email, username: user.username },
       process.env.JWT_SECRET || "secretkey",
