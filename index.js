@@ -219,7 +219,7 @@ app.post("/send-otp", async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    const brevo = require("@getbrevo/brevo");
+    const SibApiV3Sdk = require("sib-api-v3-sdk");
 
 const apiInstance = new brevo.TransactionalEmailsApi();
 
