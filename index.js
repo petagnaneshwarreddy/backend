@@ -125,6 +125,19 @@ const Credential = mongoose.model(
   })
 );
 
+// ── NEW: OTP model for email verification during registration ──
+// TTL index on expiresAt means MongoDB automatically deletes expired
+// OTP documents — no manual cleanup needed.
+const otpSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  otp: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  createdAt: { type: Date, default: Date.now },
+  expiresAt: { type: Date, required: true },
+});
+otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+const Otp = mongoose.model("Otp", otpSchema);
+
 const Enrollment = mongoose.model(
   "Enrollment",
   new mongoose.Schema({
@@ -176,7 +189,119 @@ function generateCertificateId() {
   return id;
 }
 
+function generateOtp() {
+  // 6-digit numeric OTP, always zero-padded
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
 // -------------------- AUTH ROUTES --------------------
+
+// SEND OTP (Step 1 of registration)
+app.post("/send-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const existingUser = await Credential.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "This email is already registered" });
+    }
+
+    const otp = generateOtp();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // valid 10 minutes
+
+    // Upsert so re-requesting an OTP for the same email overwrites the old one
+    await Otp.findOneAndUpdate(
+      { email },
+      { email, otp, attempts: 0, createdAt: new Date(), expiresAt },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await sendMail({
+      to: email,
+      subject: "Your Skillfull Technologies verification code",
+      html: `
+        <h2>Verify your email</h2>
+        <p>Your one-time verification code is:</p>
+        <h1 style="letter-spacing:4px;">${otp}</h1>
+        <p>This code expires in 10 minutes. If you didn't request this, you can ignore this email.</p>
+        <br/>
+        <b>Skillfull Technologies</b>
+      `,
+    });
+
+    console.log(`✅ OTP sent to ${email}`);
+    res.json({ message: "OTP sent to your email." });
+  } catch (err) {
+    console.error("Send OTP error:", err);
+    res.status(500).json({ message: "Failed to send OTP. Please try again." });
+  }
+});
+
+// REGISTER (Step 2 — verifies OTP, creates account)
+app.post("/register", async (req, res) => {
+  try {
+    const { username, email, password, otp } = req.body;
+
+    if (!username || !email || !password || !otp) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const existingUser = await Credential.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "This email is already registered" });
+    }
+
+    const otpRecord = await Otp.findOne({ email });
+    if (!otpRecord) {
+      return res.status(400).json({ message: "No OTP request found for this email. Please request a new OTP." });
+    }
+
+    if (otpRecord.expiresAt < new Date()) {
+      await Otp.deleteOne({ email });
+      return res.status(400).json({ message: "OTP has expired. Please request a new one." });
+    }
+
+    if (otpRecord.otp !== String(otp).trim()) {
+      otpRecord.attempts += 1;
+      await otpRecord.save();
+      // Lock out after too many wrong attempts to slow down brute-forcing
+      if (otpRecord.attempts >= 5) {
+        await Otp.deleteOne({ email });
+        return res.status(400).json({ message: "Too many incorrect attempts. Please request a new OTP." });
+      }
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = await Credential.create({
+      username,
+      email,
+      password: hashedPassword,
+    });
+
+    // OTP is used — remove it so it can't be replayed
+    await Otp.deleteOne({ email });
+
+    const token = jwt.sign(
+      { id: newUser._id, email: newUser.email, username: newUser.username },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: "1h" }
+    );
+
+    console.log(`✅ New user registered: ${email}`);
+    res.status(201).json({ message: "Registered successfully.", token });
+  } catch (err) {
+    console.error("Register error:", err);
+    // Duplicate key error (race condition on unique email index)
+    if (err.code === 11000) {
+      return res.status(400).json({ message: "This email is already registered" });
+    }
+    res.status(500).json({ message: "Registration failed." });
+  }
+});
 
 // LOGIN
 app.post("/login", async (req, res) => {
