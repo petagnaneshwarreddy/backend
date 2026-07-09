@@ -18,8 +18,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,           // 587 STARTTLS — Render allows this (465 SSL is blocked)
-  secure: false,
-  requireTLS: true,      // false for STARTTLS
+  secure: false,       // false for STARTTLS
   auth: {
     user: process.env.EMAIL_USER,  // skillfulltec@gmail.com
     pass: process.env.EMAIL_PASS,  // Gmail App Password (16-char, no spaces)
@@ -46,32 +45,20 @@ transporter.verify((err) => {
 async function sendMail({ to, subject, html, text }) {
   const plainText = text || html.replace(/<[^>]+>/g, "");
 
- // 1️⃣ Try Resend first
-if (process.env.RESEND_API_KEY) {
-  try {
-    const { data, error } = await resend.emails.send({
-      from: "Skillfull Technologies <onboarding@resend.dev>",
-      to: [to],
-      subject,
-      html,
-      text: plainText,
-    });
-
-    if (error) {
-      console.error("❌ Resend Error:", error);
-      throw new Error(error.message);
+  // 1️⃣ Try Resend first
+  if (process.env.RESEND_API_KEY) {
+    try {
+      await resend.emails.send({
+        from: "Skillfull Technologies <onboarding@resend.dev>",
+        to, subject, html,
+        text: plainText,
+      });
+      console.log(`✅ [Resend] Email sent to ${to}`);
+      return;
+    } catch (err) {
+      console.warn(`⚠️  Resend failed (${err.message}) — falling back to Gmail SMTP…`);
     }
-
-    console.log("✅ Resend Email Sent");
-    console.log("Email ID:", data?.id);
-    console.log("To:", to);
-
-    return;
-  } catch (err) {
-    console.error("❌ Resend Failed:", err.message);
-    console.log("➡️ Falling back to Gmail SMTP...");
   }
-}
 
   // 2️⃣ Fallback: Gmail SMTP via Nodemailer
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
@@ -232,18 +219,38 @@ app.post("/send-otp", async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    await sendMail({
-      to: email,
-      subject: "Your Skillfull Technologies verification code",
-      html: `
-        <h2>Verify your email</h2>
-        <p>Your one-time verification code is:</p>
-        <h1 style="letter-spacing:4px;">${otp}</h1>
-        <p>This code expires in 10 minutes. If you didn't request this, you can ignore this email.</p>
-        <br/>
-        <b>Skillfull Technologies</b>
-      `,
-    });
+    const brevo = require("@getbrevo/brevo");
+
+const apiInstance = new brevo.TransactionalEmailsApi();
+
+apiInstance.setApiKey(
+  brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
+
+const sendSmtpEmail = new brevo.SendSmtpEmail();
+
+sendSmtpEmail.sender = {
+  name: "Skillfull Technologies",
+  email: "skillfulltec@gmail.com",
+};
+
+sendSmtpEmail.to = [
+  {
+    email: email,
+  },
+];
+
+sendSmtpEmail.subject = "Your Skillfull Technologies verification code";
+
+sendSmtpEmail.htmlContent = `
+<h2>Verify your email</h2>
+<p>Your OTP is:</p>
+<h1>${otp}</h1>
+<p>This OTP expires in 10 minutes.</p>
+`;
+
+await apiInstance.sendTransacEmail(sendSmtpEmail);
 
     console.log(`✅ OTP sent to ${email}`);
     res.json({ message: "OTP sent to your email." });
