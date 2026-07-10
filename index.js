@@ -86,7 +86,7 @@ async function sendMail({ to, subject, html, text }) {
 }
 
 // -------------------- MIDDLEWARE --------------------
-app.use(express.json());
+app.use(express.json({ limit: "15mb" })); // raised so base64 thumbnails/docs from the admin forms fit
 
 app.use(
   cors({
@@ -115,25 +115,34 @@ mongoose
 
 // -------------------- MODELS --------------------
 
-// ── Credential now carries role + optional profile fields so the
-//    same collection covers both students and admins. ──
+// ── Credential (auth + profile + role) ──
+// NEW fields: role, phone, bio, status, lastLogin, settings — all needed so
+// the frontend's localStorage "role" check and the Profile/Settings/Students
+// pages have real data to read instead of only sample fallbacks.
 const Credential = mongoose.model(
   "Credential",
   new mongoose.Schema({
     username: String,
     email: { type: String, unique: true },
     password: String,
-    phone: { type: String, default: "" },
     role: { type: String, enum: ["student", "admin"], default: "student" },
-    // Set true when an admin invites a student with a temp password —
-    // lets the frontend force a password-change screen on first login.
-    mustResetPassword: { type: Boolean, default: false },
-    invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Credential", default: null },
+    phone: { type: String, default: "" },
+    bio: { type: String, default: "" },
+    status: { type: String, enum: ["Active", "Inactive", "Suspended"], default: "Active" },
+    lastLogin: { type: Date, default: Date.now },
+    settings: {
+      emailNotifications: { type: Boolean, default: true },
+      courseUpdates: { type: Boolean, default: true },
+      promotionalEmails: { type: Boolean, default: false },
+      weeklyDigest: { type: Boolean, default: true },
+      profileVisible: { type: Boolean, default: true },
+      showProgressToOthers: { type: Boolean, default: false },
+    },
     createdAt: { type: Date, default: Date.now }
   })
 );
 
-// ── NEW: OTP model for email verification during registration ──
+// ── OTP model for email verification during registration ──
 // TTL index on expiresAt means MongoDB automatically deletes expired
 // OTP documents — no manual cleanup needed.
 const otpSchema = new mongoose.Schema({
@@ -168,7 +177,7 @@ const Enrollment = mongoose.model(
   })
 );
 
-// ── NEW: Certificate requests (save for approval) ──
+// ── Certificate requests (save for approval) ──
 const CertificateRequest = mongoose.model(
   "CertificateRequest",
   new mongoose.Schema({
@@ -187,6 +196,89 @@ const CertificateRequest = mongoose.model(
   })
 );
 
+// ── NEW: Course model — matches the fields used in Courses.js / AdminCreateCourse.js ──
+const lessonSchema = new mongoose.Schema({
+  title: String,
+  duration: { type: Number, default: 0 },
+  video: { type: String, default: "" },
+  pdfs: [{ type: String }],        // data URLs / file references
+  code: [{ type: String }],
+  assignments: { type: String, default: "" },
+  quizzes: [{
+    question: String,
+    options: [String],
+    correct: { type: Number, default: 0 },
+  }],
+}, { _id: false });
+
+const moduleSchema = new mongoose.Schema({
+  title: String,
+  lessons: [lessonSchema],
+}, { _id: false });
+
+const Course = mongoose.model(
+  "Course",
+  new mongoose.Schema({
+    title: { type: String, required: true },
+    category: { type: String, default: "Web Development" },
+    level: { type: String, default: "Beginner" },
+    instructor: { type: String, required: true },
+    price: { type: Number, default: 0 },
+    duration: { type: Number, default: 0 },
+    students: { type: Number, default: 0 },
+    rating: { type: Number, default: 0 },
+    status: { type: String, enum: ["Draft", "Published"], default: "Draft" },
+    thumbnail: { type: String, default: "" },
+    description: { type: String, default: "" },
+    document: { type: String, default: "" },
+    youtubeUrl: { type: String, default: "" },
+    outcomes: [{ type: String }],
+    requirements: [{ type: String }],
+    modules: [moduleSchema],
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: String, default: () => new Date().toISOString().slice(0, 10) },
+  })
+);
+
+// ── NEW: tracks a student's progress in a course (separate from the
+// public certificate/Enrollment flow above, which is unrelated) ──
+const CourseEnrollment = mongoose.model(
+  "CourseEnrollment",
+  new mongoose.Schema({
+    student: { type: mongoose.Schema.Types.ObjectId, ref: "Credential", required: true },
+    course: { type: mongoose.Schema.Types.ObjectId, ref: "Course", required: true },
+    progress: { type: Number, default: 0 },
+    completed: { type: Boolean, default: false },
+    certificateEarned: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now },
+  })
+);
+
+// ── NEW: Notification model ──
+const Notification = mongoose.model(
+  "Notification",
+  new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "Credential", required: true },
+    type: { type: String, default: "system" }, // enroll | progress | cert | publish | review | signup | system
+    title: { type: String, required: true },
+    text: { type: String, required: true },
+    link: { type: String, default: "" },
+    read: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now },
+  })
+);
+
+// ── NEW: Platform settings (single shared document, admin-editable) ──
+const PlatformSettings = mongoose.model(
+  "PlatformSettings",
+  new mongoose.Schema({
+    siteName: { type: String, default: "Skillfull Technologies" },
+    supportEmail: { type: String, default: "skillfulltec@gmail.com" },
+    allowNewSignups: { type: Boolean, default: true },
+    maintenanceMode: { type: Boolean, default: false },
+  })
+);
+
 // -------------------- HELPERS --------------------
 function generateCertificateId() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -202,47 +294,58 @@ function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function generateTempPassword(len = 10) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  let out = "";
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
+function formatDate(d) {
+  return new Date(d).toISOString().slice(0, 10);
 }
 
-function signToken(user) {
-  return jwt.sign(
-    { id: user._id, email: user.email, username: user.username, role: user.role },
-    process.env.JWT_SECRET || "secretkey",
-    { expiresIn: "1h" }
-  );
+// Rough "2h ago" / "3d ago" formatter used for notifications + last-active.
+function timeAgo(date) {
+  const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+// Creates a notification for a user; swallow errors so it never blocks
+// the action that triggered it.
+async function notify(userId, { type, title, text, link }) {
+  try {
+    await Notification.create({ user: userId, type, title, text, link: link || "" });
+  } catch (err) {
+    console.warn("⚠️  Failed to create notification:", err.message);
+  }
 }
 
 // -------------------- AUTH MIDDLEWARE --------------------
-
-// Verifies the Bearer token and attaches the decoded payload to req.user.
-// Every route that needs "who is logged in" should use this first.
-function verifyToken(req, res, next) {
+// Verifies the "Authorization: Bearer <token>" header and attaches
+// req.userId / req.userRole. Used by every route below that needs a
+// logged-in user (i.e. everything the frontend pages call besides
+// /send-otp, /register, /login, /api/enroll, /api/contact, /api/verify).
+function auth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-
-  if (!token) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
+  if (!token) return res.status(401).json({ message: "No token provided" });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
-    req.user = decoded; // { id, email, username, role }
+    req.userId = decoded.id;
+    req.userRole = decoded.role || "student";
     next();
   } catch (err) {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
 
-// Must run AFTER verifyToken. Blocks anyone whose token role isn't "admin".
-// This is the real access control — never rely on what the frontend
-// shows/hides, since localStorage and UI state are trivially editable.
-function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "admin") {
+function adminOnly(req, res, next) {
+  if (req.userRole !== "admin") {
     return res.status(403).json({ message: "Admin access required" });
   }
   next();
@@ -316,9 +419,6 @@ app.post("/send-otp", async (req, res) => {
 });
 
 // REGISTER (Step 2 — verifies OTP, creates account)
-// Public self-registration ALWAYS creates a "student" account — admins
-// are never created through this route. See /api/admin/students and
-// /api/admin/bootstrap below for how admin/student accounts get made.
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password, otp } = req.body;
@@ -358,13 +458,17 @@ app.post("/register", async (req, res) => {
       username,
       email,
       password: hashedPassword,
-      role: "student",
+      role: "student", // all self-registered accounts start as students; promote to admin manually in the DB
     });
 
     // OTP is used — remove it so it can't be replayed
     await Otp.deleteOne({ email });
 
-    const token = signToken(newUser);
+    const token = jwt.sign(
+      { id: newUser._id, email: newUser.email, username: newUser.username, role: newUser.role },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: "1h" }
+    );
 
     console.log(`✅ New user registered: ${email}`);
     res.status(201).json({ message: "Registered successfully.", token, role: newUser.role });
@@ -397,248 +501,489 @@ app.post("/login", async (req, res) => {
 
     if (!user) return res.status(400).json({ message: "User not found" });
 
+    if (user.status === "Suspended") {
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
+    }
+
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(400).json({ message: "Invalid password" });
 
-    const token = signToken(user);
+    user.lastLogin = new Date();
+    await user.save();
 
-    // role + mustResetPassword go back to the frontend so Nav.js can
-    // show the right links and the app can force a password change
-    // for freshly invited students.
-    res.json({
-      message: "Login successful",
-      token,
-      role: user.role,
-      mustResetPassword: user.mustResetPassword,
-      name: user.username,
-    });
+    const token = jwt.sign(
+      { id: user._id, email: user.email, username: user.username, role: user.role },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: "1h" }
+    );
+    // NOTE: the frontend stores this "role" value directly in
+    // localStorage("role") after login, which is what every page's
+    // isAdmin check reads.
+    res.json({ message: "Login successful", token, role: user.role, username: user.username });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Login error" });
   }
 });
 
-// CHANGE PASSWORD (any logged-in user — used after an invited student's
-// first login to replace the temp password admin shared with them)
-app.post("/change-password", verifyToken, async (req, res) => {
+// -------------------- COURSES ROUTES --------------------
+// Used by Courses.js (list/search/filter/sort, admin edit/delete/toggle
+// status) and AdminCreateCourse.js (rich create with modules/lessons).
+
+// GET ALL COURSES — any logged-in user
+app.get("/courses", auth, async (req, res) => {
+  try {
+    const courses = await Course.find().sort({ createdAt: -1 });
+    res.json(courses);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch courses" });
+  }
+});
+
+// GET ONE COURSE
+app.get("/courses/:id", auth, async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    res.json(course);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch course" });
+  }
+});
+
+// CREATE COURSE — admin only
+app.post("/courses", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = { ...req.body, updatedAt: formatDate(new Date()) };
+    const course = await Course.create(payload);
+    res.status(201).json(course);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to create course" });
+  }
+});
+
+// UPDATE COURSE — admin only (also used for the publish/draft toggle)
+app.put("/courses/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const payload = { ...req.body, updatedAt: formatDate(new Date()) };
+    const course = await Course.findByIdAndUpdate(req.params.id, payload, { new: true });
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    res.json(course);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update course" });
+  }
+});
+
+// DELETE COURSE — admin only
+app.delete("/courses/:id", auth, adminOnly, async (req, res) => {
+  try {
+    await Course.findByIdAndDelete(req.params.id);
+    await CourseEnrollment.deleteMany({ course: req.params.id });
+    res.json({ message: "Course deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete course" });
+  }
+});
+
+// -------------------- DASHBOARD ROUTE --------------------
+// GET /dashboard — role-aware, matches Dashboard.js's AdminDashboard /
+// StudentDashboard shapes.
+app.get("/dashboard", auth, async (req, res) => {
+  try {
+    if (req.userRole === "admin") {
+      const [totalStudents, totalCourses, courses, recentNotifs] = await Promise.all([
+        Credential.countDocuments({ role: "student" }),
+        Course.countDocuments(),
+        Course.find().sort({ students: -1 }).limit(4),
+        Notification.find().sort({ createdAt: -1 }).limit(5),
+      ]);
+
+      const allCourses = await Course.find();
+      const totalRevenue = allCourses.reduce((s, c) => s + (c.students || 0) * (c.price || 0), 0);
+
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const newSignupsWeek = await Credential.countDocuments({
+        role: "student",
+        createdAt: { $gte: weekAgo },
+      });
+
+      // Bucket signups per weekday for the last 7 days (Mon..Sun order to match WeeklyBarChart)
+      const signupUsers = await Credential.find({ role: "student", createdAt: { $gte: weekAgo } });
+      const weeklySignups = [0, 0, 0, 0, 0, 0, 0];
+      signupUsers.forEach((u) => {
+        const day = new Date(u.createdAt).getDay(); // 0 = Sunday
+        const idx = day === 0 ? 6 : day - 1; // shift so Monday = 0
+        weeklySignups[idx] += 1;
+      });
+
+      res.json({
+        totalStudents,
+        totalCourses,
+        totalRevenue,
+        newSignupsWeek,
+        weeklySignups,
+        topCourses: courses.map((c) => ({
+          id: c._id,
+          title: c.title,
+          students: c.students,
+          rating: c.rating,
+        })),
+        activity: recentNotifs.map((n) => ({
+          id: n._id,
+          type: n.type,
+          text: n.text,
+          time: timeAgo(n.createdAt),
+        })),
+      });
+    } else {
+      const enrollments = await CourseEnrollment.find({ student: req.userId }).populate("course");
+      const continueLearning = enrollments
+        .filter((e) => !e.completed)
+        .slice(0, 5)
+        .map((e) => ({
+          id: e.course?._id,
+          title: e.course?.title,
+          progress: e.progress,
+          category: e.course?.category,
+        }));
+
+      const recommended = await Course.find({ status: "Published" }).limit(2);
+      const notifs = await Notification.find({ user: req.userId }).sort({ createdAt: -1 }).limit(5);
+
+      res.json({
+        hoursLearned: enrollments.reduce((s, e) => s + (e.course?.duration || 0) * (e.progress / 100), 0) | 0,
+        coursesEnrolled: enrollments.length,
+        coursesCompleted: enrollments.filter((e) => e.completed).length,
+        certificates: enrollments.filter((e) => e.certificateEarned).length,
+        continueLearning,
+        recommended: recommended.map((c) => ({
+          id: c._id,
+          title: c.title,
+          category: c.category,
+          students: c.students,
+        })),
+        activity: notifs.map((n) => ({
+          id: n._id,
+          type: n.type,
+          text: n.text,
+          time: timeAgo(n.createdAt),
+        })),
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to load dashboard" });
+  }
+});
+
+// -------------------- NOTIFICATIONS ROUTES --------------------
+
+// GET /notifications — current user's feed
+app.get("/notifications", auth, async (req, res) => {
+  try {
+    const notifs = await Notification.find({ user: req.userId }).sort({ createdAt: -1 });
+    res.json(
+      notifs.map((n) => ({
+        id: n._id,
+        type: n.type,
+        title: n.title,
+        text: n.text,
+        link: n.link,
+        read: n.read,
+        time: timeAgo(n.createdAt),
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch notifications" });
+  }
+});
+
+// PUT /notifications/mark-all-read — must be declared BEFORE /:id so
+// Express doesn't treat "mark-all-read" as an :id param.
+app.put("/notifications/mark-all-read", auth, async (req, res) => {
+  try {
+    await Notification.updateMany({ user: req.userId, read: false }, { read: true });
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to mark notifications as read" });
+  }
+});
+
+// PUT /notifications/:id — mark one as read
+app.put("/notifications/:id", auth, async (req, res) => {
+  try {
+    const notif = await Notification.findOneAndUpdate(
+      { _id: req.params.id, user: req.userId },
+      { read: req.body.read !== undefined ? req.body.read : true },
+      { new: true }
+    );
+    if (!notif) return res.status(404).json({ message: "Notification not found" });
+    res.json(notif);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update notification" });
+  }
+});
+
+// DELETE /notifications/:id
+app.delete("/notifications/:id", auth, async (req, res) => {
+  try {
+    await Notification.findOneAndDelete({ _id: req.params.id, user: req.userId });
+    res.json({ message: "Notification removed" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to remove notification" });
+  }
+});
+
+// -------------------- PROFILE ROUTES --------------------
+
+// GET /profile
+app.get("/profile", auth, async (req, res) => {
+  try {
+    const user = await Credential.findById(req.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const base = {
+      name: user.username,
+      email: user.email,
+      phone: user.phone,
+      bio: user.bio,
+      role: user.role,
+      joinedAt: formatDate(user.createdAt),
+    };
+
+    if (user.role === "admin") {
+      const [coursesManaged, studentsManaged] = await Promise.all([
+        Course.countDocuments(),
+        Credential.countDocuments({ role: "student" }),
+      ]);
+      return res.json({ ...base, coursesManaged, studentsManaged });
+    }
+
+    const enrollments = await CourseEnrollment.find({ student: user._id }).populate("course");
+    res.json({
+      ...base,
+      hoursLearned: Math.round(
+        enrollments.reduce((s, e) => s + (e.course?.duration || 0) * (e.progress / 100), 0)
+      ),
+      coursesEnrolled: enrollments.length,
+      certificates: enrollments.filter((e) => e.certificateEarned).length,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch profile" });
+  }
+});
+
+// PUT /profile
+app.put("/profile", auth, async (req, res) => {
+  try {
+    const { name, email, phone, bio } = req.body;
+    const update = {};
+    if (name !== undefined) update.username = name;
+    if (email !== undefined) update.email = email;
+    if (phone !== undefined) update.phone = phone;
+    if (bio !== undefined) update.bio = bio;
+
+    const user = await Credential.findByIdAndUpdate(req.userId, update, { new: true });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({
+      name: user.username,
+      email: user.email,
+      phone: user.phone,
+      bio: user.bio,
+    });
+  } catch (err) {
+    console.error(err);
+    if (err.code === 11000) {
+      return res.status(400).json({ message: "That email is already in use" });
+    }
+    res.status(500).json({ message: "Failed to update profile" });
+  }
+});
+
+// PUT /profile/password
+app.put("/profile/password", auth, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: "currentPassword and newPassword are required" });
-    }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: "New password must be at least 6 characters" });
+      return res.status(400).json({ message: "Current and new password are required" });
     }
 
-    const user = await Credential.findById(req.user.id);
+    const user = await Credential.findById(req.userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const match = await bcrypt.compare(currentPassword, user.password);
     if (!match) return res.status(400).json({ message: "Current password is incorrect" });
 
     user.password = await bcrypt.hash(newPassword, 10);
-    user.mustResetPassword = false;
     await user.save();
 
     res.json({ message: "Password updated" });
   } catch (err) {
-    console.error("Change password error:", err);
+    console.error(err);
     res.status(500).json({ message: "Failed to update password" });
   }
 });
 
-// -------------------- ADMIN: STUDENT MANAGEMENT --------------------
-// Every route below requires a valid token AND role === "admin".
-// This is what actually stops a student from hitting these endpoints,
-// regardless of what the sidebar shows them.
+// -------------------- SETTINGS ROUTES --------------------
 
-// LIST STUDENTS
-app.get("/api/admin/students", verifyToken, requireAdmin, async (req, res) => {
+// GET /settings
+app.get("/settings", auth, async (req, res) => {
   try {
-    const students = await Credential.find({ role: "student" })
-      .select("-password")
-      .sort({ createdAt: -1 });
-    res.json(students);
+    const user = await Credential.findById(req.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const body = { settings: user.settings };
+    if (req.userRole === "admin") {
+      let platform = await PlatformSettings.findOne();
+      if (!platform) platform = await PlatformSettings.create({});
+      body.platform = platform;
+    }
+    res.json(body);
   } catch (err) {
-    console.error("List students error:", err);
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch settings" });
+  }
+});
+
+// PUT /settings — user notification/privacy preferences
+app.put("/settings", auth, async (req, res) => {
+  try {
+    const user = await Credential.findByIdAndUpdate(
+      req.userId,
+      { settings: req.body },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ settings: user.settings });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to save settings" });
+  }
+});
+
+// PUT /settings/platform — admin only
+app.put("/settings/platform", auth, adminOnly, async (req, res) => {
+  try {
+    let platform = await PlatformSettings.findOne();
+    if (!platform) {
+      platform = await PlatformSettings.create(req.body);
+    } else {
+      Object.assign(platform, req.body);
+      await platform.save();
+    }
+    res.json(platform);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to save platform settings" });
+  }
+});
+
+// DELETE /account
+app.delete("/account", auth, async (req, res) => {
+  try {
+    await Credential.findByIdAndDelete(req.userId);
+    await CourseEnrollment.deleteMany({ student: req.userId });
+    await Notification.deleteMany({ user: req.userId });
+    res.json({ message: "Account deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete account" });
+  }
+});
+
+// -------------------- STUDENTS ROUTES (admin only) --------------------
+
+// GET /students
+app.get("/students", auth, adminOnly, async (req, res) => {
+  try {
+    const students = await Credential.find({ role: "student" }).sort({ createdAt: -1 });
+    const results = await Promise.all(
+      students.map(async (s) => {
+        const enrollments = await CourseEnrollment.find({ student: s._id }).populate("course");
+        return {
+          id: s._id,
+          name: s.username,
+          email: s.email,
+          status: s.status,
+          joinedAt: formatDate(s.createdAt),
+          lastActive: timeAgo(s.lastLogin || s.createdAt),
+          certificates: enrollments.filter((e) => e.certificateEarned).length,
+          courses: enrollments
+            .filter((e) => e.course)
+            .map((e) => ({
+              id: e.course._id,
+              title: e.course.title,
+              category: e.course.category,
+              progress: e.progress,
+            })),
+        };
+      })
+    );
+    res.json(results);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Failed to fetch students" });
   }
 });
 
-// INVITE / CREATE STUDENT
-// Matches the Admincreatestudent frontend form: { name, phone, email, password }
-// Creates the account immediately with the given (or generated) password,
-// and emails the student their login details. The admin's own "copy to
-// share" button in the UI is a manual backup if email delivery fails.
-app.post("/api/admin/students", verifyToken, requireAdmin, async (req, res) => {
+// PUT /students/:id — update status (Active / Inactive / Suspended)
+app.put("/students/:id", auth, adminOnly, async (req, res) => {
   try {
-    let { name, phone, email, password } = req.body;
-
-    if (!name || !phone || !email) {
-      return res.status(400).json({ message: "name, phone and email are required" });
+    const { status } = req.body;
+    if (status && !["Active", "Inactive", "Suspended"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
     }
-
-    const existing = await Credential.findOne({ email });
-    if (existing) {
-      return res.status(400).json({ message: "This email is already registered" });
-    }
-
-    if (!password) password = generateTempPassword();
-    if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const student = await Credential.create({
-      username: name,
-      email,
-      phone,
-      password: hashedPassword,
-      role: "student",
-      mustResetPassword: true,
-      invitedBy: req.user.id,
-    });
-
-    // Best-effort email — don't fail the whole request if delivery fails,
-    // since the admin can still copy/share the credentials from the UI.
-    try {
-      await sendMail({
-        to: email,
-        subject: "You've been invited to Skillfull Technologies",
-        html: `
-          <div style="font-family:Arial,sans-serif">
-            <h2>Welcome, ${name} 👋</h2>
-            <p>An admin has created your student account at Skillfull Technologies.</p>
-            <p><b>Email:</b> ${email}<br/>
-               <b>Temporary password:</b> ${password}</p>
-            <p>Please log in and change your password on first login.</p>
-            <br/>
-            <b>Skillfull Technologies</b>
-          </div>
-        `,
-        text: `Welcome ${name}. Email: ${email}. Temporary password: ${password}. Please change it after logging in.`,
-      });
-    } catch (emailErr) {
-      console.warn("Invite email failed (student still created):", emailErr.message);
-    }
-
-    console.log(`✅ Student invited by admin ${req.user.email}: ${email}`);
-    res.status(201).json({
-      message: "Student invited",
-      student: {
-        id: student._id,
-        name: student.username,
-        email: student.email,
-        phone: student.phone,
-        role: student.role,
-      },
-      // Returned once so the admin UI can still show/copy it even if
-      // the email above failed to send.
-      tempPassword: password,
-    });
-  } catch (err) {
-    console.error("Invite student error:", err);
-    if (err.code === 11000) {
-      return res.status(400).json({ message: "This email is already registered" });
-    }
-    res.status(500).json({ message: "Failed to invite student" });
-  }
-});
-
-// UPDATE STUDENT (name/phone/email, or reset their password)
-app.put("/api/admin/students/:id", verifyToken, requireAdmin, async (req, res) => {
-  try {
-    const { name, phone, email, newPassword } = req.body;
-    const update = {};
-    if (name) update.username = name;
-    if (phone) update.phone = phone;
-    if (email) update.email = email;
-    if (newPassword) {
-      if (newPassword.length < 6) {
-        return res.status(400).json({ message: "Password must be at least 6 characters" });
-      }
-      update.password = await bcrypt.hash(newPassword, 10);
-      update.mustResetPassword = true;
-    }
-
     const student = await Credential.findOneAndUpdate(
       { _id: req.params.id, role: "student" },
-      update,
+      { status },
       { new: true }
-    ).select("-password");
-
+    );
     if (!student) return res.status(404).json({ message: "Student not found" });
-    res.json({ message: "Student updated", student });
+
+    if (status) {
+      await notify(student._id, {
+        type: "system",
+        title: "Account status updated",
+        text: `Your account status was changed to "${status}".`,
+        link: "/settings",
+      });
+    }
+
+    res.json({ id: student._id, status: student.status });
   } catch (err) {
-    console.error("Update student error:", err);
+    console.error(err);
     res.status(500).json({ message: "Failed to update student" });
   }
 });
 
-// DELETE STUDENT
-app.delete("/api/admin/students/:id", verifyToken, requireAdmin, async (req, res) => {
+// DELETE /students/:id
+app.delete("/students/:id", auth, adminOnly, async (req, res) => {
   try {
-    const deleted = await Credential.findOneAndDelete({ _id: req.params.id, role: "student" });
-    if (!deleted) return res.status(404).json({ message: "Student not found" });
-    res.json({ message: "Student deleted" });
+    const student = await Credential.findOneAndDelete({ _id: req.params.id, role: "student" });
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    await CourseEnrollment.deleteMany({ student: req.params.id });
+    await Notification.deleteMany({ user: req.params.id });
+    res.json({ message: "Student removed" });
   } catch (err) {
-    console.error("Delete student error:", err);
-    res.status(500).json({ message: "Failed to delete student" });
+    console.error(err);
+    res.status(500).json({ message: "Failed to remove student" });
   }
 });
 
-// -------------------- ADMIN BOOTSTRAP --------------------
-// Solves the chicken-and-egg problem: to create an admin via the API
-// above you must already BE an admin. This route creates the very
-// first admin (or promotes an existing account) using a one-time
-// secret from your environment — NOT a JWT — so use it once, then
-// treat that secret as compromised and rotate it.
-//
-// Set ADMIN_SETUP_SECRET in your .env before calling this, e.g.:
-//   ADMIN_SETUP_SECRET=some-long-random-string
-//
-// Call once:
-//   POST /api/admin/bootstrap
-//   headers: { "x-setup-secret": "some-long-random-string" }
-//   body: { "email": "you@example.com", "username": "Admin", "password": "..." }
-app.post("/api/admin/bootstrap", async (req, res) => {
-  try {
-    const setupSecret = req.headers["x-setup-secret"];
-    if (!process.env.ADMIN_SETUP_SECRET || setupSecret !== process.env.ADMIN_SETUP_SECRET) {
-      return res.status(403).json({ message: "Invalid setup secret" });
-    }
+// -------------------- ENROLLMENT ROUTES (public certificate flow) --------------------
 
-    const { email, username, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: "email and password are required" });
-    }
-
-    let user = await Credential.findOne({ email });
-    if (user) {
-      user.role = "admin";
-      if (username) user.username = username;
-      await user.save();
-    } else {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      user = await Credential.create({
-        username: username || "Admin",
-        email,
-        password: hashedPassword,
-        role: "admin",
-      });
-    }
-
-    console.log(`✅ Admin bootstrapped: ${email}`);
-    res.json({ message: "Admin account ready", email: user.email, role: user.role });
-  } catch (err) {
-    console.error("Bootstrap admin error:", err);
-    res.status(500).json({ message: "Failed to bootstrap admin" });
-  }
-});
-
-// -------------------- ENROLLMENT ROUTES --------------------
-
-// COURSE ENROLLMENT (public — anyone can enroll)
+// COURSE ENROLLMENT
 app.post("/api/enroll", async (req, res) => {
   try {
     const certificateId = generateCertificateId();
@@ -669,8 +1014,8 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// GET ALL ENROLLMENTS — admin only
-app.get("/api/admin/enrollments", verifyToken, requireAdmin, async (req, res) => {
+// GET ALL ENROLLMENTS
+app.get("/api/admin/enrollments", async (req, res) => {
   try {
     const enrollments = await Enrollment.find().sort({ createdAt: -1 });
     res.json(enrollments);
@@ -680,8 +1025,8 @@ app.get("/api/admin/enrollments", verifyToken, requireAdmin, async (req, res) =>
   }
 });
 
-// UPDATE ENROLLMENT — admin only
-app.put("/api/admin/enrollments/:id", verifyToken, requireAdmin, async (req, res) => {
+// UPDATE ENROLLMENT
+app.put("/api/admin/enrollments/:id", async (req, res) => {
   try {
     const updatedEnrollment = await Enrollment.findByIdAndUpdate(
       req.params.id, req.body, { new: true }
@@ -693,8 +1038,8 @@ app.put("/api/admin/enrollments/:id", verifyToken, requireAdmin, async (req, res
   }
 });
 
-// DELETE ENROLLMENT — admin only
-app.delete("/api/admin/enrollments/:id", verifyToken, requireAdmin, async (req, res) => {
+// DELETE ENROLLMENT
+app.delete("/api/admin/enrollments/:id", async (req, res) => {
   try {
     await Enrollment.findByIdAndDelete(req.params.id);
     res.json({ msg: "Enrollment deleted successfully" });
@@ -706,59 +1051,54 @@ app.delete("/api/admin/enrollments/:id", verifyToken, requireAdmin, async (req, 
 
 // -------------------- CERTIFICATE ROUTES --------------------
 
-// SAVE CERTIFICATE FOR APPROVAL — admin only
-app.post(
-  "/api/admin/certificates/save",
-  verifyToken,
-  requireAdmin,
-  upload.single("certificate"),
-  async (req, res) => {
-    try {
-      const { studentName, certificateId, courseTitle, collegeName, issueDate } = req.body;
+// SAVE CERTIFICATE FOR APPROVAL (from Certificate page)
+// Accepts: multipart/form-data with "certificate" PDF file + metadata fields
+app.post("/api/admin/certificates/save", upload.single("certificate"), async (req, res) => {
+  try {
+    const { studentName, certificateId, courseTitle, collegeName, issueDate } = req.body;
 
-      if (!studentName || !certificateId) {
-        return res.status(400).json({ msg: "studentName and certificateId are required" });
-      }
-
-      // Check if a request for this cert already exists — update it
-      const existing = await CertificateRequest.findOne({ certificateId });
-
-      const certData = {
-        studentName,
-        certificateId,
-        courseTitle:   courseTitle   || "",
-        collegeName:   collegeName   || "",
-        issueDate:     issueDate     || new Date().toLocaleDateString("en-IN"),
-        status:        "pending",
-        reviewedAt:    null,
-        reviewNote:    "",
-      };
-
-      if (req.file) {
-        certData.pdfData     = req.file.buffer;
-        certData.pdfMimeType = req.file.mimetype || "application/pdf";
-        certData.pdfFileName = req.file.originalname || `Certificate_${studentName}.pdf`;
-      }
-
-      let saved;
-      if (existing) {
-        saved = await CertificateRequest.findByIdAndUpdate(existing._id, certData, { new: true });
-      } else {
-        saved = await CertificateRequest.create(certData);
-      }
-
-      console.log(`✅ Certificate saved for approval: ${studentName} (${certificateId})`);
-      res.status(201).json({ msg: "Certificate saved for approval", id: saved._id, status: "pending" });
-
-    } catch (err) {
-      console.error("Certificate save error:", err);
-      res.status(500).json({ msg: "Failed to save certificate" });
+    if (!studentName || !certificateId) {
+      return res.status(400).json({ msg: "studentName and certificateId are required" });
     }
-  }
-);
 
-// GET ALL PENDING CERTIFICATE REQUESTS — admin only
-app.get("/api/admin/certificates/pending", verifyToken, requireAdmin, async (req, res) => {
+    // Check if a request for this cert already exists — update it
+    const existing = await CertificateRequest.findOne({ certificateId });
+
+    const certData = {
+      studentName,
+      certificateId,
+      courseTitle:   courseTitle   || "",
+      collegeName:   collegeName   || "",
+      issueDate:     issueDate     || new Date().toLocaleDateString("en-IN"),
+      status:        "pending",
+      reviewedAt:    null,
+      reviewNote:    "",
+    };
+
+    if (req.file) {
+      certData.pdfData     = req.file.buffer;
+      certData.pdfMimeType = req.file.mimetype || "application/pdf";
+      certData.pdfFileName = req.file.originalname || `Certificate_${studentName}.pdf`;
+    }
+
+    let saved;
+    if (existing) {
+      saved = await CertificateRequest.findByIdAndUpdate(existing._id, certData, { new: true });
+    } else {
+      saved = await CertificateRequest.create(certData);
+    }
+
+    console.log(`✅ Certificate saved for approval: ${studentName} (${certificateId})`);
+    res.status(201).json({ msg: "Certificate saved for approval", id: saved._id, status: "pending" });
+
+  } catch (err) {
+    console.error("Certificate save error:", err);
+    res.status(500).json({ msg: "Failed to save certificate" });
+  }
+});
+
+// GET ALL PENDING CERTIFICATE REQUESTS (Admin Approvals page)
+app.get("/api/admin/certificates/pending", async (req, res) => {
   try {
     // Return all requests (pending + approved + declined), newest first
     // Exclude pdfData from list (too large) — use separate download endpoint
@@ -781,8 +1121,8 @@ app.get("/api/admin/certificates/pending", verifyToken, requireAdmin, async (req
   }
 });
 
-// UPDATE CERTIFICATE STATUS — admin only
-app.put("/api/admin/certificates/:id/status", verifyToken, requireAdmin, async (req, res) => {
+// UPDATE CERTIFICATE STATUS — approve or decline
+app.put("/api/admin/certificates/:id/status", async (req, res) => {
   try {
     const { status, reviewNote } = req.body;
 
@@ -875,8 +1215,7 @@ app.put("/api/admin/certificates/:id/status", verifyToken, requireAdmin, async (
   }
 });
 
-// DOWNLOAD CERTIFICATE PDF by certificateId — public (students/anyone
-// verifying a certificate need this without logging in)
+// DOWNLOAD CERTIFICATE PDF by certificateId
 app.get("/api/certificates/:certificateId/download", async (req, res) => {
   try {
     const cert = await CertificateRequest.findOne({
@@ -902,7 +1241,7 @@ app.get("/api/certificates/:certificateId/download", async (req, res) => {
   }
 });
 
-// VERIFY CERTIFICATE — public
+// VERIFY CERTIFICATE
 app.get("/api/verify/:certificateId", async (req, res) => {
   try {
     const data = await Enrollment.findOne({ certificateId: req.params.certificateId });
@@ -914,10 +1253,10 @@ app.get("/api/verify/:certificateId", async (req, res) => {
   }
 });
 
-// -------------------- CONTACT / EMAIL ROUTES --------------------
+// -------------------- ADMIN EMAIL ROUTE --------------------
 
-// ── SEND EMAIL (from Template page) — admin only ──
-app.post("/api/admin/send-email", verifyToken, requireAdmin, async (req, res) => {
+// ── SEND EMAIL (from Template page) ──
+app.post("/api/admin/send-email", async (req, res) => {
   try {
     const { to, subject, html, text } = req.body;
     if (!to || !subject || !html) {
@@ -935,7 +1274,7 @@ app.post("/api/admin/send-email", verifyToken, requireAdmin, async (req, res) =>
   }
 });
 
-// -------------------- CONTACT ROUTE (public) --------------------
+// -------------------- CONTACT ROUTE --------------------
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
