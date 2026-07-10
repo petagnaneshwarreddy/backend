@@ -1004,10 +1004,26 @@ app.delete("/students/:id", auth, adminOnly, async (req, res) => {
 // -------------------- ENROLLMENT ROUTES (public certificate flow) --------------------
 
 app.post("/api/enroll", async (req, res) => {
+  let enrollment;
   try {
-    const certificateId = generateCertificateId();
-    const enrollment = await Enrollment.create({ ...req.body, certificateId });
+    const { fullName, email, phone, collegeName, state, courseTitle } = req.body;
+    if (!fullName || !email || !phone || !collegeName || !state || !courseTitle) {
+      return res.status(400).json({ msg: "All fields are required" });
+    }
 
+    const certificateId = generateCertificateId();
+    enrollment = await Enrollment.create({ ...req.body, certificateId });
+  } catch (err) {
+    // Only a real DB/save failure should report "Enrollment failed"
+    console.error("Enrollment save error:", err);
+    return res.status(500).json({ msg: "Enrollment failed" });
+  }
+
+  // Enrollment is saved — respond success immediately.
+  res.status(201).json({ msg: "Enrollment successful" });
+
+  // Email is best-effort and must never affect the response above.
+  try {
     await sendMail({
       to: enrollment.email,
       subject: `Enrollment Confirmation - ${enrollment.courseTitle}`,
@@ -1016,7 +1032,7 @@ app.post("/api/enroll", async (req, res) => {
         <p>You have successfully enrolled in:</p>
         <h3>${enrollment.courseTitle}</h3>
         <p>Your Certificate ID:</p>
-        <b>${certificateId}</b>
+        <b>${enrollment.certificateId}</b>
         <p>Our team will contact you shortly.</p>
         <p>
           <a href="https://chat.whatsapp.com/CtzXvTddE0aGQ6vASHzs6e">Join WhatsApp Community</a>
@@ -1025,11 +1041,8 @@ app.post("/api/enroll", async (req, res) => {
         <b>Skillfull Technologies</b>
       `
     });
-
-    res.status(201).json({ msg: "Enrollment successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: "Enrollment failed" });
+  } catch (mailErr) {
+    console.error("⚠️  Enrollment confirmation email failed (enrollment still saved):", mailErr.message);
   }
 });
 
