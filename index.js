@@ -512,10 +512,6 @@ app.post("/login", async (req, res) => {
 });
 
 // -------------------- CURRENT USER (session check) --------------------
-// Frontend "checking access" guards should hit this route with the stored
-// JWT (Authorization: Bearer <token>) to confirm the session is valid and
-// to fetch the current user's role for routing (student -> dashboard,
-// admin -> admin dashboard, etc).
 app.get("/me", auth, async (req, res) => {
   try {
     const user = await Credential.findById(req.userId).select("-password");
@@ -673,7 +669,7 @@ app.put("/courses/:id/progress", auth, async (req, res) => {
   }
 });
 
-// -------------------- DASHBOARD ROUTE --------------------
+// -------------------- DASHBOARD ROUTE (admin + student) --------------------
 app.get("/dashboard", auth, async (req, res) => {
   try {
     if (req.userRole === "admin") {
@@ -1052,10 +1048,7 @@ app.delete("/students/:id", auth, adminOnly, async (req, res) => {
 });
 
 // -------------------- INVITE ROUTES (admin only) --------------------
-// Admins generate a one-time signup code that grants the "admin" role
-// when used at /register. Codes are shared manually (link or code text).
 
-// Generate a new admin invite code
 app.post("/api/admin/invites", auth, adminOnly, async (req, res) => {
   try {
     const { expiresInDays } = req.body;
@@ -1092,7 +1085,6 @@ app.post("/api/admin/invites", auth, adminOnly, async (req, res) => {
   }
 });
 
-// List all invites
 app.get("/api/admin/invites", auth, adminOnly, async (req, res) => {
   try {
     const invites = await Invite.find()
@@ -1118,7 +1110,6 @@ app.get("/api/admin/invites", auth, adminOnly, async (req, res) => {
   }
 });
 
-// Revoke a pending invite
 app.delete("/api/admin/invites/:id", auth, adminOnly, async (req, res) => {
   try {
     const invite = await Invite.findById(req.params.id);
@@ -1135,7 +1126,6 @@ app.delete("/api/admin/invites/:id", auth, adminOnly, async (req, res) => {
   }
 });
 
-// Public check — lets a signup page validate a code before rendering the form
 app.get("/api/invites/:code/check", async (req, res) => {
   try {
     const invite = await Invite.findOne({ code: req.params.code.trim().toUpperCase() });
@@ -1162,15 +1152,12 @@ app.post("/api/enroll", async (req, res) => {
     const certificateId = generateCertificateId();
     enrollment = await Enrollment.create({ ...req.body, certificateId });
   } catch (err) {
-    // Only a real DB/save failure should report "Enrollment failed"
     console.error("Enrollment save error:", err);
     return res.status(500).json({ msg: "Enrollment failed" });
   }
 
-  // Enrollment is saved — respond success immediately.
   res.status(201).json({ msg: "Enrollment successful" });
 
-  // Email is best-effort and must never affect the response above.
   try {
     await sendMail({
       to: enrollment.email,
