@@ -425,35 +425,18 @@ app.post("/login", async (req, res) => {
 
     const loginValue = identifier || email;
 
-    console.log("Login Value:", loginValue);
-
-    console.log("=================================");
-console.log("LOGIN REQUEST");
-console.log("Identifier:", loginValue);
-
-const totalUsers = await Credential.countDocuments();
-console.log("Total Users:", totalUsers);
-
-const allUsers = await Credential.find({}, "username email role");
-console.log("Users:", allUsers);
-
-const user = await Credential.findOne({
-  $or: [
-    { username: loginValue },
-    { email: loginValue },
-  ],
-});
-
-console.log("Found User:", user);
-console.log("=================================");
+    const user = await Credential.findOne({
+      $or: [
+        { username: loginValue },
+        { email: loginValue },
+      ],
+    });
 
     if (!user) {
       return res.status(400).json({
         message: "User not found",
       });
     }
-
-    // rest of your code...
 
     if (user.status === "Suspended") {
       return res.status(403).json({ message: "This account has been suspended. Contact support." });
@@ -475,6 +458,35 @@ console.log("=================================");
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Login error" });
+  }
+});
+
+// -------------------- CURRENT USER (session check) --------------------
+// Frontend "checking access" guards should hit this route with the stored
+// JWT (Authorization: Bearer <token>) to confirm the session is valid and
+// to fetch the current user's role for routing (student -> dashboard,
+// admin -> admin dashboard, etc).
+app.get("/me", auth, async (req, res) => {
+  try {
+    const user = await Credential.findById(req.userId).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.status === "Suspended") {
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
+    }
+
+    res.json({
+      id: user._id,
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      status: user.status,
+    });
+  } catch (err) {
+    console.error("Me route error:", err);
+    res.status(500).json({ message: "Failed to fetch current user" });
   }
 });
 
