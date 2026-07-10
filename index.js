@@ -27,7 +27,7 @@ const transporter = nodemailer.createTransport({
     rejectUnauthorized: false,
     ciphers: "SSLv3",
   },
-  connectionTimeout: 10000,  // 10s timeout
+  connectionTimeout: 10000,
   greetingTimeout:   10000,
   socketTimeout:     15000,
 });
@@ -45,7 +45,6 @@ transporter.verify((err) => {
 async function sendMail({ to, subject, html, text }) {
   const plainText = text || html.replace(/<[^>]+>/g, "");
 
-  // 1️⃣ Try Resend first
   if (process.env.RESEND_API_KEY) {
     try {
       await resend.emails.send({
@@ -60,7 +59,6 @@ async function sendMail({ to, subject, html, text }) {
     }
   }
 
-  // 2️⃣ Fallback: Gmail SMTP via Nodemailer
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
       const info = await transporter.sendMail({
@@ -86,7 +84,7 @@ async function sendMail({ to, subject, html, text }) {
 }
 
 // -------------------- MIDDLEWARE --------------------
-app.use(express.json({ limit: "15mb" })); // raised so base64 thumbnails/docs from the admin forms fit
+app.use(express.json({ limit: "15mb" }));
 
 app.use(
   cors({
@@ -100,11 +98,10 @@ app.use(
 );
 
 // -------------------- MULTER (for file uploads) --------------------
-// Stores PDF in memory as Buffer (no disk needed)
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 // -------------------- DATABASE --------------------
@@ -116,17 +113,15 @@ mongoose
 // -------------------- MODELS --------------------
 
 // ── Credential (auth + profile + role) ──
-// NEW fields: role, phone, bio, status, lastLogin, settings — all needed so
-// the frontend's localStorage "role" check and the Profile/Settings/Students
-// pages have real data to read instead of only sample fallbacks.
 const Credential = mongoose.model(
   "Credential",
   new mongoose.Schema({
+    name: { type: String, default: "" },
     username: String,
     email: { type: String, unique: true },
+    phone: { type: String, default: "" },
     password: String,
     role: { type: String, enum: ["student", "admin"], default: "student" },
-    phone: { type: String, default: "" },
     bio: { type: String, default: "" },
     status: { type: String, enum: ["Active", "Inactive", "Suspended"], default: "Active" },
     lastLogin: { type: Date, default: Date.now },
@@ -142,19 +137,6 @@ const Credential = mongoose.model(
   })
 );
 
-// ── OTP model for email verification during registration ──
-// TTL index on expiresAt means MongoDB automatically deletes expired
-// OTP documents — no manual cleanup needed.
-const otpSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  otp: { type: String, required: true },
-  attempts: { type: Number, default: 0 },
-  createdAt: { type: Date, default: Date.now },
-  expiresAt: { type: Date, required: true },
-});
-otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-const Otp = mongoose.model("Otp", otpSchema);
-
 const Enrollment = mongoose.model(
   "Enrollment",
   new mongoose.Schema({
@@ -167,8 +149,6 @@ const Enrollment = mongoose.model(
     state: String,
     duration: String,
     createdAt: { type: Date, default: Date.now },
-
-    // ── Admin dashboard fields ──
     paymentStatus: { type: String, enum: ["paid", "unpaid"], default: "unpaid" },
     amountPaid:    { type: Number, default: 0 },
     advancePaid:   { type: Number, default: 0 },
@@ -187,7 +167,7 @@ const CertificateRequest = mongoose.model(
     collegeName:   { type: String, default: "" },
     issueDate:     { type: String, default: "" },
     status:        { type: String, enum: ["pending", "approved", "declined"], default: "pending" },
-    pdfData:       { type: Buffer },        // stores PDF binary
+    pdfData:       { type: Buffer },
     pdfMimeType:   { type: String, default: "application/pdf" },
     pdfFileName:   { type: String, default: "certificate.pdf" },
     createdAt:     { type: Date, default: Date.now },
@@ -196,12 +176,12 @@ const CertificateRequest = mongoose.model(
   })
 );
 
-// ── NEW: Course model — matches the fields used in Courses.js / AdminCreateCourse.js ──
+// ── Course model ──
 const lessonSchema = new mongoose.Schema({
   title: String,
   duration: { type: Number, default: 0 },
   video: { type: String, default: "" },
-  pdfs: [{ type: String }],        // data URLs / file references
+  pdfs: [{ type: String }],
   code: [{ type: String }],
   assignments: { type: String, default: "" },
   quizzes: [{
@@ -237,10 +217,6 @@ const courseSchema = new mongoose.Schema({
   updatedAt: { type: String, default: () => new Date().toISOString().slice(0, 10) },
 });
 
-// Courses.js reads/writes `course.id` everywhere (list keys, edit, delete,
-// toggle-status) — Mongo docs use `_id` by default, so without this
-// transform every course from the real API would have id === undefined
-// and all of those actions would silently break.
 courseSchema.set("toJSON", {
   virtuals: true,
   transform: (doc, ret) => {
@@ -253,8 +229,6 @@ courseSchema.set("toJSON", {
 
 const Course = mongoose.model("Course", courseSchema);
 
-// ── NEW: tracks a student's progress in a course (separate from the
-// public certificate/Enrollment flow above, which is unrelated) ──
 const CourseEnrollment = mongoose.model(
   "CourseEnrollment",
   new mongoose.Schema({
@@ -267,12 +241,11 @@ const CourseEnrollment = mongoose.model(
   })
 );
 
-// ── NEW: Notification model ──
 const Notification = mongoose.model(
   "Notification",
   new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: "Credential", required: true },
-    type: { type: String, default: "system" }, // enroll | progress | cert | publish | review | signup | system
+    type: { type: String, default: "system" },
     title: { type: String, required: true },
     text: { type: String, required: true },
     link: { type: String, default: "" },
@@ -281,7 +254,6 @@ const Notification = mongoose.model(
   })
 );
 
-// ── NEW: Platform settings (single shared document, admin-editable) ──
 const PlatformSettings = mongoose.model(
   "PlatformSettings",
   new mongoose.Schema({
@@ -292,14 +264,10 @@ const PlatformSettings = mongoose.model(
   })
 );
 
-// ── NEW: ActivityLog — platform-wide events for the ADMIN dashboard's
-// "Recent activity" panel. Kept separate from Notification (which is
-// per-user) so a student's personal notifications and the admin's
-// platform activity feed don't get mixed together.
 const ActivityLog = mongoose.model(
   "ActivityLog",
   new mongoose.Schema({
-    type: { type: String, default: "system" }, // enroll | publish | signup | review | cert
+    type: { type: String, default: "system" },
     text: { type: String, required: true },
     createdAt: { type: Date, default: Date.now },
   })
@@ -315,16 +283,10 @@ function generateCertificateId() {
   return id;
 }
 
-function generateOtp() {
-  // 6-digit numeric OTP, always zero-padded
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
 
-// Rough "2h ago" / "3d ago" formatter used for notifications + last-active.
 function timeAgo(date) {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
   if (seconds < 60) return "just now";
@@ -341,8 +303,6 @@ function timeAgo(date) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-// Creates a notification for a user; swallow errors so it never blocks
-// the action that triggered it.
 async function notify(userId, { type, title, text, link }) {
   try {
     await Notification.create({ user: userId, type, title, text, link: link || "" });
@@ -351,9 +311,6 @@ async function notify(userId, { type, title, text, link }) {
   }
 }
 
-// Logs a platform-wide event for the admin dashboard's activity feed
-// (course published, student enrolled/signed up, etc). Swallows errors
-// for the same reason as notify().
 async function logActivity(type, text) {
   try {
     await ActivityLog.create({ type, text });
@@ -363,10 +320,6 @@ async function logActivity(type, text) {
 }
 
 // -------------------- AUTH MIDDLEWARE --------------------
-// Verifies the "Authorization: Bearer <token>" header and attaches
-// req.userId / req.userRole. Used by every route below that needs a
-// logged-in user (i.e. everything the frontend pages call besides
-// /send-otp, /register, /login, /api/enroll, /api/contact, /api/verify).
 function auth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -390,141 +343,82 @@ function adminOnly(req, res, next) {
 
 // -------------------- AUTH ROUTES --------------------
 
-// SEND OTP (Step 1 of registration)
-app.post("/send-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
-    }
-
-    const existingUser = await Credential.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "This email is already registered" });
-    }
-
-    const otp = generateOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // valid 10 minutes
-
-    // Upsert so re-requesting an OTP for the same email overwrites the old one
-    await Otp.findOneAndUpdate(
-      { email },
-      { email, otp, attempts: 0, createdAt: new Date(), expiresAt },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-
-    await sendMail({
-      to: email,
-      subject: "Skillfull Technologies - Email Verification OTP",
-      html: `
-        <div style="font-family:Arial,sans-serif">
-          <h2>Email Verification</h2>
-
-          <p>Hello,</p>
-
-          <p>Your verification code is:</p>
-
-          <h1 style="
-            background:#2563eb;
-            color:white;
-            padding:15px;
-            display:inline-block;
-            border-radius:8px;
-            letter-spacing:4px;
-          ">
-            ${otp}
-          </h1>
-
-          <p>This OTP is valid for <b>10 minutes</b>.</p>
-
-          <p>If you didn't request this OTP, please ignore this email.</p>
-
-          <br>
-
-          <b>Skillfull Technologies</b>
-        </div>
-      `,
-      text: `Your OTP is ${otp}. It expires in 10 minutes.`,
-    });
-
-    console.log(`✅ OTP sent to ${email}`);
-    res.json({ message: "OTP sent to your email." });
-  } catch (err) {
-    console.error("Send OTP error:", err);
-    res.status(500).json({ message: "Failed to send OTP. Please try again." });
-  }
-});
-
-// REGISTER (Step 2 — verifies OTP, creates account)
+// REGISTER — no OTP, straight signup with name, username, email, phone, password
 app.post("/register", async (req, res) => {
   try {
-    const { username, email, password, otp } = req.body;
+    const { username, email, password } = req.body;
 
-    if (!username || !email || !password || !otp) {
-      return res.status(400).json({ message: "All fields are required" });
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        message: "Username, email and password are required"
+      });
     }
 
-    const existingUser = await Credential.findOne({ email });
+    const existingUser = await Credential.findOne({
+      $or: [
+        { email },
+        { username }
+      ]
+    });
+
     if (existingUser) {
-      return res.status(400).json({ message: "This email is already registered" });
-    }
-
-    const otpRecord = await Otp.findOne({ email });
-    if (!otpRecord) {
-      return res.status(400).json({ message: "No OTP request found for this email. Please request a new OTP." });
-    }
-
-    if (otpRecord.expiresAt < new Date()) {
-      await Otp.deleteOne({ email });
-      return res.status(400).json({ message: "OTP has expired. Please request a new one." });
-    }
-
-    if (otpRecord.otp !== String(otp).trim()) {
-      otpRecord.attempts += 1;
-      await otpRecord.save();
-      // Lock out after too many wrong attempts to slow down brute-forcing
-      if (otpRecord.attempts >= 5) {
-        await Otp.deleteOne({ email });
-        return res.status(400).json({ message: "Too many incorrect attempts. Please request a new OTP." });
-      }
-      return res.status(400).json({ message: "Invalid OTP" });
+      return res.status(400).json({
+        message: "Email or username already exists"
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+
     const newUser = await Credential.create({
       username,
       email,
       password: hashedPassword,
-      role: "student", // all self-registered accounts start as students; promote to admin manually in the DB
+      role: "student",
+      name: "",
+      phone: ""
     });
 
-    // OTP is used — remove it so it can't be replayed
-    await Otp.deleteOne({ email });
-
     const token = jwt.sign(
-      { id: newUser._id, email: newUser.email, username: newUser.username, role: newUser.role },
+      {
+        id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role
+      },
       process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "7d" }
+      {
+        expiresIn: "7d"
+      }
     );
 
-    logActivity("signup", `${newUser.username} registered as a new student`);
+    await logActivity(
+      "signup",
+      `${newUser.username} registered`
+    );
 
-    console.log(`✅ New user registered: ${email}`);
-    res.status(201).json({ message: "Registered successfully.", token, role: newUser.role });
+    res.status(201).json({
+      message: "Registration successful",
+      token,
+      role: newUser.role,
+      username: newUser.username
+    });
+
   } catch (err) {
-    console.error("Register error:", err);
-    // Duplicate key error (race condition on unique email index)
+    console.error("Register Error:", err);
+
     if (err.code === 11000) {
-      return res.status(400).json({ message: "This email is already registered" });
+      return res.status(400).json({
+        message: "Email already exists"
+      });
     }
-    res.status(500).json({ message: "Registration failed." });
+
+    res.status(500).json({
+      message: "Registration failed"
+    });
   }
 });
 
 // LOGIN
-// Accepts "identifier" (username OR email) to match the frontend's
-// "Username or email" field, and falls back to "email" for backwards
-// compatibility with any older callers that still send that key directly.
 app.post("/login", async (req, res) => {
   try {
     const { identifier, email, password } = req.body;
@@ -555,9 +449,7 @@ app.post("/login", async (req, res) => {
       process.env.JWT_SECRET || "secretkey",
       { expiresIn: "7d" }
     );
-    // NOTE: the frontend stores this "role" value directly in
-    // localStorage("role") after login, which is what every page's
-    // isAdmin check reads.
+
     res.json({ message: "Login successful", token, role: user.role, username: user.username });
   } catch (err) {
     console.error(err);
@@ -566,10 +458,7 @@ app.post("/login", async (req, res) => {
 });
 
 // -------------------- COURSES ROUTES --------------------
-// Used by Courses.js (list/search/filter/sort, admin edit/delete/toggle
-// status) and AdminCreateCourse.js (rich create with modules/lessons).
 
-// GET ALL COURSES — any logged-in user
 app.get("/courses", auth, async (req, res) => {
   try {
     const courses = await Course.find().sort({ createdAt: -1 });
@@ -580,7 +469,6 @@ app.get("/courses", auth, async (req, res) => {
   }
 });
 
-// GET ONE COURSE
 app.get("/courses/:id", auth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
@@ -592,7 +480,6 @@ app.get("/courses/:id", auth, async (req, res) => {
   }
 });
 
-// CREATE COURSE — admin only
 app.post("/courses", auth, adminOnly, async (req, res) => {
   try {
     const payload = { ...req.body, updatedAt: formatDate(new Date()) };
@@ -610,7 +497,6 @@ app.post("/courses", auth, adminOnly, async (req, res) => {
   }
 });
 
-// UPDATE COURSE — admin only (also used for the publish/draft toggle)
 app.put("/courses/:id", auth, adminOnly, async (req, res) => {
   try {
     const before = await Course.findById(req.params.id);
@@ -619,7 +505,6 @@ app.put("/courses/:id", auth, adminOnly, async (req, res) => {
     const payload = { ...req.body, updatedAt: formatDate(new Date()) };
     const course = await Course.findByIdAndUpdate(req.params.id, payload, { new: true });
 
-    // Only fire when a Draft actually flips to Published, not on every edit
     if (before.status !== "Published" && course.status === "Published") {
       logActivity("publish", `"${course.title}" was published`);
     }
@@ -631,7 +516,6 @@ app.put("/courses/:id", auth, adminOnly, async (req, res) => {
   }
 });
 
-// DELETE COURSE — admin only
 app.delete("/courses/:id", auth, adminOnly, async (req, res) => {
   try {
     await Course.findByIdAndDelete(req.params.id);
@@ -643,10 +527,6 @@ app.delete("/courses/:id", auth, adminOnly, async (req, res) => {
   }
 });
 
-// POST /courses/:id/enroll — a student enrolls themselves in a course.
-// Not called by any of the current admin pages, but it's what actually
-// populates CourseEnrollment so Dashboard "Continue learning", Profile
-// stats, and the Students admin drawer have real data instead of zeros.
 app.post("/courses/:id/enroll", auth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
@@ -676,8 +556,6 @@ app.post("/courses/:id/enroll", auth, async (req, res) => {
   }
 });
 
-// PUT /courses/:id/progress — update the current user's progress in a
-// course they're enrolled in; auto-completes + awards a certificate at 100%.
 app.put("/courses/:id/progress", auth, async (req, res) => {
   try {
     const { progress } = req.body;
@@ -713,8 +591,6 @@ app.put("/courses/:id/progress", auth, async (req, res) => {
 });
 
 // -------------------- DASHBOARD ROUTE --------------------
-// GET /dashboard — role-aware, matches Dashboard.js's AdminDashboard /
-// StudentDashboard shapes.
 app.get("/dashboard", auth, async (req, res) => {
   try {
     if (req.userRole === "admin") {
@@ -734,12 +610,11 @@ app.get("/dashboard", auth, async (req, res) => {
         createdAt: { $gte: weekAgo },
       });
 
-      // Bucket signups per weekday for the last 7 days (Mon..Sun order to match WeeklyBarChart)
       const signupUsers = await Credential.find({ role: "student", createdAt: { $gte: weekAgo } });
       const weeklySignups = [0, 0, 0, 0, 0, 0, 0];
       signupUsers.forEach((u) => {
-        const day = new Date(u.createdAt).getDay(); // 0 = Sunday
-        const idx = day === 0 ? 6 : day - 1; // shift so Monday = 0
+        const day = new Date(u.createdAt).getDay();
+        const idx = day === 0 ? 6 : day - 1;
         weeklySignups[idx] += 1;
       });
 
@@ -805,7 +680,6 @@ app.get("/dashboard", auth, async (req, res) => {
 
 // -------------------- NOTIFICATIONS ROUTES --------------------
 
-// GET /notifications — current user's feed
 app.get("/notifications", auth, async (req, res) => {
   try {
     const notifs = await Notification.find({ user: req.userId }).sort({ createdAt: -1 });
@@ -826,8 +700,6 @@ app.get("/notifications", auth, async (req, res) => {
   }
 });
 
-// PUT /notifications/mark-all-read — must be declared BEFORE /:id so
-// Express doesn't treat "mark-all-read" as an :id param.
 app.put("/notifications/mark-all-read", auth, async (req, res) => {
   try {
     await Notification.updateMany({ user: req.userId, read: false }, { read: true });
@@ -838,7 +710,6 @@ app.put("/notifications/mark-all-read", auth, async (req, res) => {
   }
 });
 
-// PUT /notifications/:id — mark one as read
 app.put("/notifications/:id", auth, async (req, res) => {
   try {
     const notif = await Notification.findOneAndUpdate(
@@ -854,7 +725,6 @@ app.put("/notifications/:id", auth, async (req, res) => {
   }
 });
 
-// DELETE /notifications/:id
 app.delete("/notifications/:id", auth, async (req, res) => {
   try {
     await Notification.findOneAndDelete({ _id: req.params.id, user: req.userId });
@@ -867,14 +737,14 @@ app.delete("/notifications/:id", auth, async (req, res) => {
 
 // -------------------- PROFILE ROUTES --------------------
 
-// GET /profile
 app.get("/profile", auth, async (req, res) => {
   try {
     const user = await Credential.findById(req.userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const base = {
-      name: user.username,
+      name: user.name,
+      username: user.username,
       email: user.email,
       phone: user.phone,
       bio: user.bio,
@@ -905,12 +775,12 @@ app.get("/profile", auth, async (req, res) => {
   }
 });
 
-// PUT /profile
 app.put("/profile", auth, async (req, res) => {
   try {
-    const { name, email, phone, bio } = req.body;
+    const { name, username, email, phone, bio } = req.body;
     const update = {};
-    if (name !== undefined) update.username = name;
+    if (name !== undefined) update.name = name;
+    if (username !== undefined) update.username = username;
     if (email !== undefined) update.email = email;
     if (phone !== undefined) update.phone = phone;
     if (bio !== undefined) update.bio = bio;
@@ -919,7 +789,8 @@ app.put("/profile", auth, async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     res.json({
-      name: user.username,
+      name: user.name,
+      username: user.username,
       email: user.email,
       phone: user.phone,
       bio: user.bio,
@@ -933,7 +804,6 @@ app.put("/profile", auth, async (req, res) => {
   }
 });
 
-// PUT /profile/password
 app.put("/profile/password", auth, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -959,7 +829,6 @@ app.put("/profile/password", auth, async (req, res) => {
 
 // -------------------- SETTINGS ROUTES --------------------
 
-// GET /settings
 app.get("/settings", auth, async (req, res) => {
   try {
     const user = await Credential.findById(req.userId);
@@ -978,7 +847,6 @@ app.get("/settings", auth, async (req, res) => {
   }
 });
 
-// PUT /settings — user notification/privacy preferences
 app.put("/settings", auth, async (req, res) => {
   try {
     const user = await Credential.findByIdAndUpdate(
@@ -994,7 +862,6 @@ app.put("/settings", auth, async (req, res) => {
   }
 });
 
-// PUT /settings/platform — admin only
 app.put("/settings/platform", auth, adminOnly, async (req, res) => {
   try {
     let platform = await PlatformSettings.findOne();
@@ -1011,7 +878,6 @@ app.put("/settings/platform", auth, adminOnly, async (req, res) => {
   }
 });
 
-// DELETE /account
 app.delete("/account", auth, async (req, res) => {
   try {
     await Credential.findByIdAndDelete(req.userId);
@@ -1026,7 +892,6 @@ app.delete("/account", auth, async (req, res) => {
 
 // -------------------- STUDENTS ROUTES (admin only) --------------------
 
-// GET /students
 app.get("/students", auth, adminOnly, async (req, res) => {
   try {
     const students = await Credential.find({ role: "student" }).sort({ createdAt: -1 });
@@ -1035,8 +900,10 @@ app.get("/students", auth, adminOnly, async (req, res) => {
         const enrollments = await CourseEnrollment.find({ student: s._id }).populate("course");
         return {
           id: s._id,
-          name: s.username,
+          name: s.name,
+          username: s.username,
           email: s.email,
+          phone: s.phone,
           status: s.status,
           joinedAt: formatDate(s.createdAt),
           lastActive: timeAgo(s.lastLogin || s.createdAt),
@@ -1059,7 +926,6 @@ app.get("/students", auth, adminOnly, async (req, res) => {
   }
 });
 
-// PUT /students/:id — update status (Active / Inactive / Suspended)
 app.put("/students/:id", auth, adminOnly, async (req, res) => {
   try {
     const { status } = req.body;
@@ -1089,7 +955,6 @@ app.put("/students/:id", auth, adminOnly, async (req, res) => {
   }
 });
 
-// DELETE /students/:id
 app.delete("/students/:id", auth, adminOnly, async (req, res) => {
   try {
     const student = await Credential.findOneAndDelete({ _id: req.params.id, role: "student" });
@@ -1105,7 +970,6 @@ app.delete("/students/:id", auth, adminOnly, async (req, res) => {
 
 // -------------------- ENROLLMENT ROUTES (public certificate flow) --------------------
 
-// COURSE ENROLLMENT
 app.post("/api/enroll", async (req, res) => {
   try {
     const certificateId = generateCertificateId();
@@ -1136,8 +1000,7 @@ app.post("/api/enroll", async (req, res) => {
   }
 });
 
-// GET ALL ENROLLMENTS
-app.get("/api/admin/enrollments", async (req, res) => {
+app.get("/api/admin/enrollments", auth, adminOnly, async (req, res) => {
   try {
     const enrollments = await Enrollment.find().sort({ createdAt: -1 });
     res.json(enrollments);
@@ -1147,8 +1010,7 @@ app.get("/api/admin/enrollments", async (req, res) => {
   }
 });
 
-// UPDATE ENROLLMENT
-app.put("/api/admin/enrollments/:id", async (req, res) => {
+app.put("/api/admin/enrollments/:id", auth, adminOnly, async (req, res) => {
   try {
     const updatedEnrollment = await Enrollment.findByIdAndUpdate(
       req.params.id, req.body, { new: true }
@@ -1160,8 +1022,7 @@ app.put("/api/admin/enrollments/:id", async (req, res) => {
   }
 });
 
-// DELETE ENROLLMENT
-app.delete("/api/admin/enrollments/:id", async (req, res) => {
+app.delete("/api/admin/enrollments/:id", auth, adminOnly, async (req, res) => {
   try {
     await Enrollment.findByIdAndDelete(req.params.id);
     res.json({ msg: "Enrollment deleted successfully" });
@@ -1173,9 +1034,7 @@ app.delete("/api/admin/enrollments/:id", async (req, res) => {
 
 // -------------------- CERTIFICATE ROUTES --------------------
 
-// SAVE CERTIFICATE FOR APPROVAL (from Certificate page)
-// Accepts: multipart/form-data with "certificate" PDF file + metadata fields
-app.post("/api/admin/certificates/save", upload.single("certificate"), async (req, res) => {
+app.post("/api/admin/certificates/save", auth, adminOnly, upload.single("certificate"), async (req, res) => {
   try {
     const { studentName, certificateId, courseTitle, collegeName, issueDate } = req.body;
 
@@ -1183,7 +1042,6 @@ app.post("/api/admin/certificates/save", upload.single("certificate"), async (re
       return res.status(400).json({ msg: "studentName and certificateId are required" });
     }
 
-    // Check if a request for this cert already exists — update it
     const existing = await CertificateRequest.findOne({ certificateId });
 
     const certData = {
@@ -1219,16 +1077,12 @@ app.post("/api/admin/certificates/save", upload.single("certificate"), async (re
   }
 });
 
-// GET ALL PENDING CERTIFICATE REQUESTS (Admin Approvals page)
-app.get("/api/admin/certificates/pending", async (req, res) => {
+app.get("/api/admin/certificates/pending", auth, adminOnly, async (req, res) => {
   try {
-    // Return all requests (pending + approved + declined), newest first
-    // Exclude pdfData from list (too large) — use separate download endpoint
     const requests = await CertificateRequest
       .find({}, { pdfData: 0 })
       .sort({ createdAt: -1 });
 
-    // Add pdfUrl for frontend to use
     const withUrls = requests.map(r => ({
       ...r.toObject(),
       pdfUrl: r.pdfData
@@ -1243,8 +1097,7 @@ app.get("/api/admin/certificates/pending", async (req, res) => {
   }
 });
 
-// UPDATE CERTIFICATE STATUS — approve or decline
-app.put("/api/admin/certificates/:id/status", async (req, res) => {
+app.put("/api/admin/certificates/:id/status", auth, adminOnly, async (req, res) => {
   try {
     const { status, reviewNote } = req.body;
 
@@ -1264,7 +1117,6 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
 
     if (!cert) return res.status(404).json({ msg: "Certificate request not found" });
 
-    // If approved → mark certIssued = true on Enrollment too
     if (status === "approved") {
       await Enrollment.findOneAndUpdate(
         { certificateId: cert.certificateId },
@@ -1272,7 +1124,6 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
       );
       console.log(`✅ Certificate approved & enrollment updated: ${cert.certificateId}`);
 
-      // Optionally send email to student
       const enrollment = await Enrollment.findOne({ certificateId: cert.certificateId });
       if (enrollment?.email) {
         try {
@@ -1304,7 +1155,6 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
       }
     }
 
-    // If declined → send decline email
     if (status === "declined") {
       const enrollment = await Enrollment.findOne({ certificateId: cert.certificateId });
       if (enrollment?.email) {
@@ -1337,12 +1187,11 @@ app.put("/api/admin/certificates/:id/status", async (req, res) => {
   }
 });
 
-// DOWNLOAD CERTIFICATE PDF by certificateId
 app.get("/api/certificates/:certificateId/download", async (req, res) => {
   try {
     const cert = await CertificateRequest.findOne({
       certificateId: req.params.certificateId,
-      status: "approved"  // only approved certs can be downloaded
+      status: "approved"
     });
 
     if (!cert || !cert.pdfData) {
@@ -1363,7 +1212,6 @@ app.get("/api/certificates/:certificateId/download", async (req, res) => {
   }
 });
 
-// VERIFY CERTIFICATE
 app.get("/api/verify/:certificateId", async (req, res) => {
   try {
     const data = await Enrollment.findOne({ certificateId: req.params.certificateId });
@@ -1377,8 +1225,7 @@ app.get("/api/verify/:certificateId", async (req, res) => {
 
 // -------------------- ADMIN EMAIL ROUTE --------------------
 
-// ── SEND EMAIL (from Template page) ──
-app.post("/api/admin/send-email", async (req, res) => {
+app.post("/api/admin/send-email", auth, adminOnly, async (req, res) => {
   try {
     const { to, subject, html, text } = req.body;
     if (!to || !subject || !html) {
@@ -1396,7 +1243,7 @@ app.post("/api/admin/send-email", async (req, res) => {
   }
 });
 
-// -------------------- CONTACT ROUTE --------------------
+// -------------------- CONTACT ROUTE (public) --------------------
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, message } = req.body;
@@ -1436,7 +1283,6 @@ app.get("/", (req, res) => {
   res.json({ message: "Backend running 🚀" });
 });
 
-// ── TEST EMAIL — visit /api/test-email?to=yourmail@gmail.com
 app.get("/api/test-email", async (req, res) => {
   const to = req.query.to || process.env.EMAIL_USER;
   try {
@@ -1452,7 +1298,7 @@ app.get("/api/test-email", async (req, res) => {
 });
 
 // -------------------- SERVER --------------------
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
