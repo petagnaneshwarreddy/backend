@@ -292,6 +292,19 @@ const PlatformSettings = mongoose.model(
   })
 );
 
+// ── NEW: ActivityLog — platform-wide events for the ADMIN dashboard's
+// "Recent activity" panel. Kept separate from Notification (which is
+// per-user) so a student's personal notifications and the admin's
+// platform activity feed don't get mixed together.
+const ActivityLog = mongoose.model(
+  "ActivityLog",
+  new mongoose.Schema({
+    type: { type: String, default: "system" }, // enroll | publish | signup | review | cert
+    text: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now },
+  })
+);
+
 // -------------------- HELPERS --------------------
 function generateCertificateId() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -335,6 +348,17 @@ async function notify(userId, { type, title, text, link }) {
     await Notification.create({ user: userId, type, title, text, link: link || "" });
   } catch (err) {
     console.warn("⚠️  Failed to create notification:", err.message);
+  }
+}
+
+// Logs a platform-wide event for the admin dashboard's activity feed
+// (course published, student enrolled/signed up, etc). Swallows errors
+// for the same reason as notify().
+async function logActivity(type, text) {
+  try {
+    await ActivityLog.create({ type, text });
+  } catch (err) {
+    console.warn("⚠️  Failed to log activity:", err.message);
   }
 }
 
@@ -483,6 +507,8 @@ app.post("/register", async (req, res) => {
       { expiresIn: "1h" }
     );
 
+    logActivity("signup", `${newUser.username} registered as a new student`);
+
     console.log(`✅ New user registered: ${email}`);
     res.status(201).json({ message: "Registered successfully.", token, role: newUser.role });
   } catch (err) {
@@ -571,6 +597,12 @@ app.post("/courses", auth, adminOnly, async (req, res) => {
   try {
     const payload = { ...req.body, updatedAt: formatDate(new Date()) };
     const course = await Course.create(payload);
+    logActivity(
+      course.status === "Published" ? "publish" : "system",
+      course.status === "Published"
+        ? `"${course.title}" was published`
+        : `"${course.title}" was added as a draft`
+    );
     res.status(201).json(course);
   } catch (err) {
     console.error(err);
@@ -581,9 +613,17 @@ app.post("/courses", auth, adminOnly, async (req, res) => {
 // UPDATE COURSE — admin only (also used for the publish/draft toggle)
 app.put("/courses/:id", auth, adminOnly, async (req, res) => {
   try {
+    const before = await Course.findById(req.params.id);
+    if (!before) return res.status(404).json({ message: "Course not found" });
+
     const payload = { ...req.body, updatedAt: formatDate(new Date()) };
     const course = await Course.findByIdAndUpdate(req.params.id, payload, { new: true });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    // Only fire when a Draft actually flips to Published, not on every edit
+    if (before.status !== "Published" && course.status === "Published") {
+      logActivity("publish", `"${course.title}" was published`);
+    }
+
     res.json(course);
   } catch (err) {
     console.error(err);
@@ -603,17 +643,86 @@ app.delete("/courses/:id", auth, adminOnly, async (req, res) => {
   }
 });
 
+// POST /courses/:id/enroll — a student enrolls themselves in a course.
+// Not called by any of the current admin pages, but it's what actually
+// populates CourseEnrollment so Dashboard "Continue learning", Profile
+// stats, and the Students admin drawer have real data instead of zeros.
+app.post("/courses/:id/enroll", auth, async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    const existing = await CourseEnrollment.findOne({ student: req.userId, course: course._id });
+    if (existing) return res.status(400).json({ message: "Already enrolled in this course" });
+
+    await CourseEnrollment.create({ student: req.userId, course: course._id });
+    course.students += 1;
+    await course.save();
+
+    const student = await Credential.findById(req.userId);
+
+    await notify(req.userId, {
+      type: "enroll",
+      title: "You're enrolled",
+      text: `You successfully enrolled in "${course.title}".`,
+      link: "/courses",
+    });
+    logActivity("enroll", `${student?.username || "A student"} enrolled in "${course.title}"`);
+
+    res.status(201).json({ message: "Enrolled successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to enroll" });
+  }
+});
+
+// PUT /courses/:id/progress — update the current user's progress in a
+// course they're enrolled in; auto-completes + awards a certificate at 100%.
+app.put("/courses/:id/progress", auth, async (req, res) => {
+  try {
+    const { progress } = req.body;
+    if (progress === undefined || progress < 0 || progress > 100) {
+      return res.status(400).json({ message: "progress must be a number between 0 and 100" });
+    }
+
+    const enrollment = await CourseEnrollment.findOne({ student: req.userId, course: req.params.id }).populate("course");
+    if (!enrollment) return res.status(404).json({ message: "Not enrolled in this course" });
+
+    const justCompleted = !enrollment.completed && progress >= 100;
+    enrollment.progress = progress;
+    if (justCompleted) {
+      enrollment.completed = true;
+      enrollment.certificateEarned = true;
+    }
+    await enrollment.save();
+
+    if (justCompleted) {
+      await notify(req.userId, {
+        type: "cert",
+        title: "Certificate earned",
+        text: `You earned a certificate in "${enrollment.course.title}". Nice work!`,
+        link: "/profile",
+      });
+    }
+
+    res.json({ progress: enrollment.progress, completed: enrollment.completed });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update progress" });
+  }
+});
+
 // -------------------- DASHBOARD ROUTE --------------------
 // GET /dashboard — role-aware, matches Dashboard.js's AdminDashboard /
 // StudentDashboard shapes.
 app.get("/dashboard", auth, async (req, res) => {
   try {
     if (req.userRole === "admin") {
-      const [totalStudents, totalCourses, courses, recentNotifs] = await Promise.all([
+      const [totalStudents, totalCourses, courses, recentActivity] = await Promise.all([
         Credential.countDocuments({ role: "student" }),
         Course.countDocuments(),
         Course.find().sort({ students: -1 }).limit(4),
-        Notification.find().sort({ createdAt: -1 }).limit(5),
+        ActivityLog.find().sort({ createdAt: -1 }).limit(5),
       ]);
 
       const allCourses = await Course.find();
@@ -646,11 +755,11 @@ app.get("/dashboard", auth, async (req, res) => {
           students: c.students,
           rating: c.rating,
         })),
-        activity: recentNotifs.map((n) => ({
-          id: n._id,
-          type: n.type,
-          text: n.text,
-          time: timeAgo(n.createdAt),
+        activity: recentActivity.map((a) => ({
+          id: a._id,
+          type: a.type,
+          text: a.text,
+          time: timeAgo(a.createdAt),
         })),
       });
     } else {
