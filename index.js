@@ -216,29 +216,42 @@ const moduleSchema = new mongoose.Schema({
   lessons: [lessonSchema],
 }, { _id: false });
 
-const Course = mongoose.model(
-  "Course",
-  new mongoose.Schema({
-    title: { type: String, required: true },
-    category: { type: String, default: "Web Development" },
-    level: { type: String, default: "Beginner" },
-    instructor: { type: String, required: true },
-    price: { type: Number, default: 0 },
-    duration: { type: Number, default: 0 },
-    students: { type: Number, default: 0 },
-    rating: { type: Number, default: 0 },
-    status: { type: String, enum: ["Draft", "Published"], default: "Draft" },
-    thumbnail: { type: String, default: "" },
-    description: { type: String, default: "" },
-    document: { type: String, default: "" },
-    youtubeUrl: { type: String, default: "" },
-    outcomes: [{ type: String }],
-    requirements: [{ type: String }],
-    modules: [moduleSchema],
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: String, default: () => new Date().toISOString().slice(0, 10) },
-  })
-);
+const courseSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  category: { type: String, default: "Web Development" },
+  level: { type: String, default: "Beginner" },
+  instructor: { type: String, required: true },
+  price: { type: Number, default: 0 },
+  duration: { type: Number, default: 0 },
+  students: { type: Number, default: 0 },
+  rating: { type: Number, default: 0 },
+  status: { type: String, enum: ["Draft", "Published"], default: "Draft" },
+  thumbnail: { type: String, default: "" },
+  description: { type: String, default: "" },
+  document: { type: String, default: "" },
+  youtubeUrl: { type: String, default: "" },
+  outcomes: [{ type: String }],
+  requirements: [{ type: String }],
+  modules: [moduleSchema],
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: String, default: () => new Date().toISOString().slice(0, 10) },
+});
+
+// Courses.js reads/writes `course.id` everywhere (list keys, edit, delete,
+// toggle-status) — Mongo docs use `_id` by default, so without this
+// transform every course from the real API would have id === undefined
+// and all of those actions would silently break.
+courseSchema.set("toJSON", {
+  virtuals: true,
+  transform: (doc, ret) => {
+    ret.id = ret._id.toString();
+    delete ret._id;
+    delete ret.__v;
+    return ret;
+  },
+});
+
+const Course = mongoose.model("Course", courseSchema);
 
 // ── NEW: tracks a student's progress in a course (separate from the
 // public certificate/Enrollment flow above, which is unrelated) ──
