@@ -504,7 +504,7 @@ app.post("/register", async (req, res) => {
     const token = jwt.sign(
       { id: newUser._id, email: newUser.email, username: newUser.username, role: newUser.role },
       process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "1h" }
+      { expiresIn: "7d" }
     );
 
     logActivity("signup", `${newUser.username} registered as a new student`);
@@ -553,7 +553,7 @@ app.post("/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, email: user.email, username: user.username, role: user.role },
       process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "1h" }
+      { expiresIn: "7d" }
     );
     // NOTE: the frontend stores this "role" value directly in
     // localStorage("role") after login, which is what every page's
