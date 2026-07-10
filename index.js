@@ -273,6 +273,21 @@ const ActivityLog = mongoose.model(
   })
 );
 
+// ── Invite (admin/staff onboarding via code) ──
+const Invite = mongoose.model(
+  "Invite",
+  new mongoose.Schema({
+    code:      { type: String, required: true, unique: true },
+    role:      { type: String, default: "admin" }, // reserved for future roles
+    status:    { type: String, enum: ["pending", "used", "revoked"], default: "pending" },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Credential", required: true },
+    usedBy:    { type: mongoose.Schema.Types.ObjectId, ref: "Credential", default: null },
+    usedAt:    { type: Date, default: null },
+    expiresAt: { type: Date, required: true },
+    createdAt: { type: Date, default: Date.now },
+  })
+);
+
 // -------------------- HELPERS --------------------
 function generateCertificateId() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -281,6 +296,15 @@ function generateCertificateId() {
     id += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return id;
+}
+
+function generateInviteCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars (0/O, 1/I)
+  let code = "";
+  for (let i = 0; i < 10; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
 }
 
 function formatDate(d) {
@@ -343,10 +367,11 @@ function adminOnly(req, res, next) {
 
 // -------------------- AUTH ROUTES --------------------
 
-// REGISTER — no OTP, straight signup with name, username, email, phone, password
+// REGISTER — straight signup with username, email, password.
+// Optionally accepts an inviteCode to grant a non-default role (e.g. admin).
 app.post("/register", async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, inviteCode } = req.body;
 
     if (!username || !email || !password) {
       return res.status(400).json({
@@ -367,16 +392,41 @@ app.post("/register", async (req, res) => {
       });
     }
 
+    // Resolve role via invite code, if provided
+    let role = "student";
+    let invite = null;
+
+    if (inviteCode) {
+      invite = await Invite.findOne({ code: inviteCode.trim().toUpperCase() });
+
+      if (!invite || invite.status !== "pending") {
+        return res.status(400).json({ message: "Invite code is invalid or already used" });
+      }
+      if (invite.expiresAt < new Date()) {
+        invite.status = "revoked";
+        await invite.save();
+        return res.status(400).json({ message: "Invite code has expired" });
+      }
+      role = invite.role || "admin";
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await Credential.create({
       username,
       email,
       password: hashedPassword,
-      role: "student",
+      role,
       name: "",
       phone: ""
     });
+
+    if (invite) {
+      invite.status = "used";
+      invite.usedBy = newUser._id;
+      invite.usedAt = new Date();
+      await invite.save();
+    }
 
     const token = jwt.sign(
       {
@@ -393,7 +443,7 @@ app.post("/register", async (req, res) => {
 
     await logActivity(
       "signup",
-      `${newUser.username} registered`
+      `${newUser.username} registered${role === "admin" ? " as admin via invite" : ""}`
     );
 
     res.status(201).json({
@@ -998,6 +1048,104 @@ app.delete("/students/:id", auth, adminOnly, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to remove student" });
+  }
+});
+
+// -------------------- INVITE ROUTES (admin only) --------------------
+// Admins generate a one-time signup code that grants the "admin" role
+// when used at /register. Codes are shared manually (link or code text).
+
+// Generate a new admin invite code
+app.post("/api/admin/invites", auth, adminOnly, async (req, res) => {
+  try {
+    const { expiresInDays } = req.body;
+    const days = Number(expiresInDays) > 0 ? Number(expiresInDays) : 7;
+
+    let code;
+    let exists = true;
+    while (exists) {
+      code = generateInviteCode();
+      exists = await Invite.findOne({ code });
+    }
+
+    const invite = await Invite.create({
+      code,
+      role: "admin",
+      createdBy: req.userId,
+      expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+    });
+
+    const link = `${process.env.FRONTEND_URL || "https://skillfulltechnologies.netlify.app"}/register?invite=${code}`;
+
+    logActivity("invite", `An admin invite code was generated (expires in ${days}d)`);
+
+    res.status(201).json({
+      id: invite._id,
+      code: invite.code,
+      link,
+      expiresAt: invite.expiresAt,
+      status: invite.status,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to generate invite" });
+  }
+});
+
+// List all invites
+app.get("/api/admin/invites", auth, adminOnly, async (req, res) => {
+  try {
+    const invites = await Invite.find()
+      .sort({ createdAt: -1 })
+      .populate("createdBy", "username email")
+      .populate("usedBy", "username email");
+
+    res.json(
+      invites.map((i) => ({
+        id: i._id,
+        code: i.code,
+        status: i.status,
+        createdBy: i.createdBy ? { username: i.createdBy.username, email: i.createdBy.email } : null,
+        usedBy: i.usedBy ? { username: i.usedBy.username, email: i.usedBy.email } : null,
+        createdAt: i.createdAt,
+        expiresAt: i.expiresAt,
+        usedAt: i.usedAt,
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch invites" });
+  }
+});
+
+// Revoke a pending invite
+app.delete("/api/admin/invites/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const invite = await Invite.findById(req.params.id);
+    if (!invite) return res.status(404).json({ message: "Invite not found" });
+    if (invite.status !== "pending") {
+      return res.status(400).json({ message: `Cannot revoke an invite that is already ${invite.status}` });
+    }
+    invite.status = "revoked";
+    await invite.save();
+    res.json({ message: "Invite revoked" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to revoke invite" });
+  }
+});
+
+// Public check — lets a signup page validate a code before rendering the form
+app.get("/api/invites/:code/check", async (req, res) => {
+  try {
+    const invite = await Invite.findOne({ code: req.params.code.trim().toUpperCase() });
+    if (!invite) return res.json({ valid: false, message: "Invite code not found" });
+    if (invite.status !== "pending") return res.json({ valid: false, message: `Invite already ${invite.status}` });
+    if (invite.expiresAt < new Date()) return res.json({ valid: false, message: "Invite code has expired" });
+    res.json({ valid: true, role: invite.role });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ valid: false, message: "Failed to check invite" });
   }
 });
 
