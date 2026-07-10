@@ -422,17 +422,38 @@ app.post("/register", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const { identifier, email, password } = req.body;
+
     const loginValue = identifier || email;
 
-    if (!loginValue || !password) {
-      return res.status(400).json({ message: "Username/email and password are required" });
+    console.log("Login Value:", loginValue);
+
+    console.log("=================================");
+console.log("LOGIN REQUEST");
+console.log("Identifier:", loginValue);
+
+const totalUsers = await Credential.countDocuments();
+console.log("Total Users:", totalUsers);
+
+const allUsers = await Credential.find({}, "username email role");
+console.log("Users:", allUsers);
+
+const user = await Credential.findOne({
+  $or: [
+    { username: loginValue },
+    { email: loginValue },
+  ],
+});
+
+console.log("Found User:", user);
+console.log("=================================");
+
+    if (!user) {
+      return res.status(400).json({
+        message: "User not found",
+      });
     }
 
-    const user = await Credential.findOne({
-      $or: [{ email: loginValue }, { username: loginValue }],
-    });
-
-    if (!user) return res.status(400).json({ message: "User not found" });
+    // rest of your code...
 
     if (user.status === "Suspended") {
       return res.status(403).json({ message: "This account has been suspended. Contact support." });
